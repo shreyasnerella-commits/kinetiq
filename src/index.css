@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+.brutal-border {
+  border: 3px solid #000000;
+}
+.brutal-shadow {
+  box-shadow: 5px 5px 0px 0px #000000;
+}
+.brutal-shadow-sm {
+  box-shadow: 3px 3px 0px 0px #000000;
+}
+.brutal-shadow-lg {
+  box-shadow: 8px 8px 0px 0px #000000;
+}
+.brutal-btn-active:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px 0px #000000;
+}
+
+body {
+  background-color: #f4f0ea;
+  color: #000000;
+  font-family: monospace, sans-serif;
+  margin: 0;
+}
