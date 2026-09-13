@@ -19,7 +19,8 @@ import {
   History, 
   Clock, 
   Loader2, 
-  ArrowRight
+  ArrowRight,
+  UserCheck
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -33,7 +34,8 @@ import {
   Bar as BarOrig, 
   ReferenceLine as ReferenceLineOrig 
 } from "recharts";
-import { db } from "./lib/firebase";
+import { db, auth } from "./lib/firebase";
+import { signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 import { 
   collection, 
   addDoc, 
@@ -41,7 +43,7 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  where 
 } from "firebase/firestore";
 import { FOOD_DATABASE, type FoodPreset } from "./data/foodDatabase";
 import { 
@@ -68,6 +70,7 @@ interface WorkoutItem {
   weight: number;
   strain: number;
   logDate: string;
+  userId?: string;
 }
 
 interface RunItem {
@@ -78,6 +81,7 @@ interface RunItem {
   strain: number;
   date: string;
   logDate: string;
+  userId?: string;
 }
 
 interface LoggedFoodItem {
@@ -88,6 +92,7 @@ interface LoggedFoodItem {
   calories: number;
   protein: number;
   logDate: string;
+  userId?: string;
 }
 
 const STATIC_RECOMP = [
@@ -122,6 +127,7 @@ export default function App() {
   const [historyMetric, setHistoryMetric] = useState<"protein" | "calories">("protein");
   const todayKey = getTodayDateKey();
 
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(todayKey);
 
   // Recovery ML State
@@ -129,30 +135,15 @@ export default function App() {
   const [mlLoading, setMlLoading] = useState(false);
   const [mlError, setMlError] = useState("");
 
-  // Persistent Collections
-  const [allWorkoutHistory, setAllWorkoutHistory] = useState<WorkoutItem[]>(() => {
-    const saved = localStorage.getItem("kinetiq_workouts_all");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [allFoodLogs, setAllFoodLogs] = useState<LoggedFoodItem[]>(() => {
-    const saved = localStorage.getItem("kinetiq_foods_all");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [allRuns, setAllRuns] = useState<RunItem[]>(() => {
-    const saved = localStorage.getItem("kinetiq_runs_all");
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Persistent Collections (Per User)
+  const [allWorkoutHistory, setAllWorkoutHistory] = useState<WorkoutItem[]>([]);
+  const [allFoodLogs, setAllFoodLogs] = useState<LoggedFoodItem[]>([]);
+  const [allRuns, setAllRuns] = useState<RunItem[]>([]);
 
   // Derived Today Logs
   const workoutList = useMemo(() => allWorkoutHistory.filter(item => item.logDate === todayKey), [allWorkoutHistory, todayKey]);
   const loggedFoods = useMemo(() => allFoodLogs.filter(item => item.logDate === todayKey), [allFoodLogs, todayKey]);
   const loggedRuns = useMemo(() => allRuns.filter(item => item.logDate === todayKey), [allRuns, todayKey]);
-
-  useEffect(() => { localStorage.setItem("kinetiq_workouts_all", JSON.stringify(allWorkoutHistory)); }, [allWorkoutHistory]);
-  useEffect(() => { localStorage.setItem("kinetiq_foods_all", JSON.stringify(allFoodLogs)); }, [allFoodLogs]);
-  useEffect(() => { localStorage.setItem("kinetiq_runs_all", JSON.stringify(allRuns)); }, [allRuns]);
 
   // Form Inputs
   const [selectedExercise, setSelectedExercise] = useState(PRESET_EXERCISES[0]);
@@ -181,12 +172,25 @@ export default function App() {
   const OPTIMAL_STRAIN_LIMIT = 120.0;
   const RESTING_HR_BASELINE = 48;
 
-  // Real-time Firestore listeners
+  // 1. Authenticate user anonymously on startup
   useEffect(() => {
-    if (!db) return;
+    if (!auth) return;
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUser(user);
+      } else {
+        signInAnonymously(auth).catch((err) => console.error("Anonymous auth failed:", err));
+      }
+    });
+    return () => unsubAuth();
+  }, []);
+
+  // 2. Fetch only documents matching currentUser.uid
+  useEffect(() => {
+    if (!db || !currentUser) return;
 
     try {
-      const qWorkouts = query(collection(db, "workouts"), orderBy("createdAt", "desc"));
+      const qWorkouts = query(collection(db, "workouts"), where("userId", "==", currentUser.uid));
       const unsubWorkouts = onSnapshot(qWorkouts, (snapshot) => {
         setAllWorkoutHistory(snapshot.docs.map(docSnap => ({
           id: docSnap.id,
@@ -196,10 +200,11 @@ export default function App() {
           weight: docSnap.data().weight,
           strain: docSnap.data().strain,
           logDate: docSnap.data().logDate || todayKey,
+          userId: docSnap.data().userId,
         })));
       }, () => {});
 
-      const qNutrition = query(collection(db, "nutrition_logs"), orderBy("createdAt", "desc"));
+      const qNutrition = query(collection(db, "nutrition_logs"), where("userId", "==", currentUser.uid));
       const unsubNutrition = onSnapshot(qNutrition, (snapshot) => {
         setAllFoodLogs(snapshot.docs.map(docSnap => ({
           id: docSnap.id,
@@ -209,10 +214,11 @@ export default function App() {
           calories: docSnap.data().calories,
           protein: docSnap.data().protein,
           logDate: docSnap.data().logDate || todayKey,
+          userId: docSnap.data().userId,
         })));
       }, () => {});
 
-      const qRuns = query(collection(db, "run_logs"), orderBy("createdAt", "desc"));
+      const qRuns = query(collection(db, "run_logs"), where("userId", "==", currentUser.uid));
       const unsubRuns = onSnapshot(qRuns, (snapshot) => {
         setAllRuns(snapshot.docs.map(docSnap => ({
           id: docSnap.id,
@@ -222,6 +228,7 @@ export default function App() {
           strain: docSnap.data().strain,
           date: docSnap.data().date,
           logDate: docSnap.data().logDate || todayKey,
+          userId: docSnap.data().userId,
         })));
       }, () => {});
 
@@ -231,7 +238,7 @@ export default function App() {
         unsubRuns();
       };
     } catch {}
-  }, [todayKey]);
+  }, [currentUser, todayKey]);
 
   // Derived metrics
   const totalWorkoutStrain = workoutList.reduce((acc, item) => acc + item.strain, 0);
@@ -323,14 +330,14 @@ export default function App() {
     }
   };
 
-  // CRUD Handlers
+  // CRUD Handlers (Attach userId to each write)
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
     const numSets = Number(sets);
     const numReps = Number(reps);
     const numWeight = Number(weight);
-    if (!numSets || !numReps || isNaN(numWeight)) return;
+    if (!numSets || !numReps || isNaN(numWeight) || !currentUser) return;
 
     const itemStrain = parseFloat(((numSets * numReps * numWeight) / 100).toFixed(1));
     const newWorkout: WorkoutItem = {
@@ -340,7 +347,8 @@ export default function App() {
       reps: numReps,
       weight: numWeight,
       strain: itemStrain,
-      logDate: todayKey
+      logDate: todayKey,
+      userId: currentUser.uid
     };
 
     setAllWorkoutHistory(prev => [newWorkout, ...prev]);
@@ -353,6 +361,7 @@ export default function App() {
           weight: numWeight,
           strain: itemStrain,
           logDate: todayKey,
+          userId: currentUser.uid,
           createdAt: new Date().toISOString()
         });
       } catch {}
@@ -370,7 +379,7 @@ export default function App() {
   const handleAddDropdownFood = async (e: React.FormEvent) => {
     e.preventDefault();
     const food = FOOD_DATABASE[selectedFoodIndex];
-    if (!food) return;
+    if (!food || !currentUser) return;
 
     const servings = Math.max(0.1, Number(presetServings) || 1);
     const newFood: LoggedFoodItem = {
@@ -380,7 +389,8 @@ export default function App() {
       servings: servings,
       calories: Math.round(food.calories * servings),
       protein: parseFloat((food.protein * servings).toFixed(1)),
-      logDate: todayKey
+      logDate: todayKey,
+      userId: currentUser.uid
     };
 
     setAllFoodLogs(prev => [newFood, ...prev]);
@@ -393,6 +403,7 @@ export default function App() {
           calories: newFood.calories,
           protein: newFood.protein,
           logDate: todayKey,
+          userId: currentUser.uid,
           createdAt: new Date().toISOString()
         });
       } catch {}
@@ -400,6 +411,7 @@ export default function App() {
   };
 
   const handleAddSearchedFood = async (food: FoodPreset) => {
+    if (!currentUser) return;
     const servings = Math.max(0.1, Number(searchServings) || 1);
     const newFood: LoggedFoodItem = {
       id: Date.now().toString(),
@@ -408,7 +420,8 @@ export default function App() {
       servings,
       calories: Math.round(food.calories * servings),
       protein: parseFloat((food.protein * servings).toFixed(1)),
-      logDate: todayKey
+      logDate: todayKey,
+      userId: currentUser.uid
     };
 
     setAllFoodLogs(prev => [newFood, ...prev]);
@@ -421,6 +434,7 @@ export default function App() {
           calories: newFood.calories,
           protein: newFood.protein,
           logDate: todayKey,
+          userId: currentUser.uid,
           createdAt: new Date().toISOString()
         });
       } catch {}
@@ -430,7 +444,7 @@ export default function App() {
 
   const handleAddCustomFood = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customFoodName.trim() || !customFoodCals || customFoodProt === "") return;
+    if (!customFoodName.trim() || !customFoodCals || customFoodProt === "" || !currentUser) return;
 
     const newFood: LoggedFoodItem = {
       id: Date.now().toString(),
@@ -439,7 +453,8 @@ export default function App() {
       servings: 1,
       calories: Number(customFoodCals),
       protein: Number(customFoodProt),
-      logDate: todayKey
+      logDate: todayKey,
+      userId: currentUser.uid
     };
 
     setAllFoodLogs(prev => [newFood, ...prev]);
@@ -452,6 +467,7 @@ export default function App() {
           calories: newFood.calories,
           protein: newFood.protein,
           logDate: todayKey,
+          userId: currentUser.uid,
           createdAt: new Date().toISOString()
         });
       } catch {}
@@ -471,7 +487,7 @@ export default function App() {
     const km = parseFloat(runDistance) || 0;
     const duration = parseFloat(runDuration) || 0;
     const hr = parseInt(avgHeartRate) || 135;
-    if (!km || !duration) return;
+    if (!km || !duration || !currentUser) return;
 
     const calculatedStrain = parseFloat((km * Math.pow(hr / 100, 2) * 1.2).toFixed(1));
     const newRun: RunItem = {
@@ -481,7 +497,8 @@ export default function App() {
       avgHr: hr,
       strain: calculatedStrain,
       date: new Date().toLocaleDateString("en-US", { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
-      logDate: todayKey
+      logDate: todayKey,
+      userId: currentUser.uid
     };
 
     setAllRuns(prev => [newRun, ...prev]);
@@ -494,10 +511,11 @@ export default function App() {
           strain: calculatedStrain,
           date: newRun.date,
           logDate: todayKey,
+          userId: currentUser.uid,
           weightKg: parseFloat(bodyWeight) || 0,
           createdAt: new Date().toISOString(),
         });
-        setStatusMessage("SAVED TO CLOUD.");
+        setStatusMessage("SAVED TO PRIVATE CLOUD.");
       } catch {
         setStatusMessage("SAVED LOCALLY.");
       }
@@ -525,6 +543,11 @@ export default function App() {
             <span className="bg-[#00FFA3] border-2 border-black px-2 py-0.5 text-xs font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" /> {todayKey}
             </span>
+            {currentUser && (
+              <span className="bg-white border-2 border-black px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1 text-zinc-600">
+                <UserCheck className="w-3 h-3 text-[#00FFA3]" /> Private Session
+              </span>
+            )}
           </div>
           <p className="text-xs uppercase font-bold tracking-widest mt-2 text-zinc-700">
             ADAPTIVE HUMAN PERFORMANCE & METABOLIC ENGINE
@@ -578,7 +601,6 @@ export default function App() {
         {/* TAB 1: RECOVERY COMMAND CENTER */}
         {activeTab === "recovery" && (
           <div className="space-y-8">
-            {/* Run Diagnosis Trigger Card */}
             <div className="bg-white border-4 border-black p-6 brutal-shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <div className="inline-flex items-center gap-1.5 bg-black text-[#00FFA3] px-2.5 py-0.5 text-xs font-black uppercase">
@@ -606,7 +628,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Diagnosis Output Card */}
             {mlPlan && (
               <section className="bg-[#FFE600] border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-2 border-black pb-4">
@@ -653,7 +674,6 @@ export default function App() {
               </section>
             )}
 
-            {/* Diagnostic Indicator Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className={`border-4 border-black p-6 brutal-shadow ${combinedTotalStrain > OPTIMAL_STRAIN_LIMIT ? "bg-red-200" : "bg-white"}`}>
                 <div className="flex justify-between items-start">
@@ -938,7 +958,7 @@ export default function App() {
               </div>
             )}
 
-            {/* OPTION 2: FOOD HISTORY (NEO-BRUTALIST GRAPH) */}
+            {/* OPTION 2: FOOD HISTORY */}
             {nutritionSubTab === "history" && (
               <div className="space-y-8">
                 <section className="bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
@@ -993,7 +1013,6 @@ export default function App() {
                   </div>
                 </section>
 
-                {/* Day Summary Metrics */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="bg-[#FFE600] border-4 border-black p-6 brutal-shadow">
                     <span className="text-xs font-black uppercase text-black">Selected Record Date</span>
@@ -1012,7 +1031,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Historical Food List */}
                 <section className="bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
                   <div className="flex justify-between items-center pb-4 border-b-2 border-black">
                     <div className="flex items-center gap-2"><History className="w-6 h-6 text-black" /><h3 className="text-xl font-black uppercase">Meals Eaten on {selectedHistoryDate}</h3></div>
