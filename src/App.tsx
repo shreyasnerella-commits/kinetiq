@@ -35,7 +35,7 @@ import {
   ReferenceLine as ReferenceLineOrig 
 } from "recharts";
 import { db, auth } from "./lib/firebase";
-import { signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
+import { signInAnonymously, onAuthStateChanged, type User } from "firebase/auth";
 import { 
   collection, 
   addDoc, 
