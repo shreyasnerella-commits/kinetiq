@@ -79,9 +79,11 @@ interface RunItem {
   durationMin: number;
   avgHr: number;
   strain: number;
+  weightKg?: number;
   date: string;
   logDate: string;
   userId?: string;
+  createdAt?: string;
 }
 
 interface LoggedFoodItem {
@@ -94,13 +96,6 @@ interface LoggedFoodItem {
   logDate: string;
   userId?: string;
 }
-
-const STATIC_RECOMP = [
-  { day: "W1", weight: 78.5 },
-  { day: "W2", weight: 78.1 },
-  { day: "W3", weight: 77.6 },
-  { day: "W4", weight: 77.2 },
-];
 
 const PRESET_EXERCISES = [
   "Barbell Back Squat",
@@ -167,12 +162,20 @@ export default function App() {
   const [bodyWeight, setBodyWeight] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
+  // User Target Settings (Clean Defaults)
   const CALORIE_TARGET = 2200;
   const PROTEIN_TARGET = 165;
   const OPTIMAL_STRAIN_LIMIT = 120.0;
-  const RESTING_HR_BASELINE = 48;
 
-  // 1. Authenticate user anonymously on startup
+  // Derive dynamic resting HR based on user's logged activity or uncalibrated fallback
+  const userRestingHr = useMemo(() => {
+    const runsWithHr = allRuns.filter(r => r.avgHr > 0);
+    if (runsWithHr.length === 0) return 60; // Uncalibrated baseline
+    const avgRecent = runsWithHr.slice(0, 5).reduce((acc, curr) => acc + curr.avgHr, 0) / Math.min(5, runsWithHr.length);
+    return Math.round(avgRecent * 0.42); // Estimate resting autonomic tone from aerobic capacity
+  }, [allRuns]);
+
+  // Authenticate user anonymously on startup
   useEffect(() => {
     if (!auth) return;
     const unsubAuth = onAuthStateChanged(auth, (user) => {
@@ -185,7 +188,7 @@ export default function App() {
     return () => unsubAuth();
   }, []);
 
-  // 2. Fetch only documents matching currentUser.uid
+  // Fetch only documents matching currentUser.uid
   useEffect(() => {
     if (!db || !currentUser) return;
 
@@ -226,9 +229,11 @@ export default function App() {
           durationMin: docSnap.data().durationMin,
           avgHr: docSnap.data().avgHr,
           strain: docSnap.data().strain,
+          weightKg: docSnap.data().weightKg,
           date: docSnap.data().date,
           logDate: docSnap.data().logDate || todayKey,
           userId: docSnap.data().userId,
+          createdAt: docSnap.data().createdAt,
         })));
       }, () => {});
 
@@ -256,6 +261,7 @@ export default function App() {
     ? "OPTIMAL ADAPTATION" 
     : "UNDER-LOADED";
 
+  // Dynamic Weekly Bar/Average Data
   const historyWeeklyChartData = useMemo(() => {
     const daysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const [y, m, d] = selectedHistoryDate.split("-").map(Number);
@@ -283,8 +289,8 @@ export default function App() {
         fullDate: dateKey,
         protein: dayProtein,
         calories: dayCalories,
-        proteinAvg: dayProtein > 0 ? dayProtein * 1.15 : 45,
-        caloriesAvg: dayCalories > 0 ? dayCalories * 1.1 : 800,
+        proteinAvg: dayProtein,
+        caloriesAvg: dayCalories,
       };
     });
   }, [allFoodLogs, selectedHistoryDate]);
@@ -298,13 +304,49 @@ export default function App() {
     return FOOD_DATABASE.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [searchQuery]);
 
+  // Dynamic Running Volume Distribution (Past 7 Days)
   const runChartData = useMemo(() => {
-    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    return days.map((day, idx) => ({
-      day,
-      km: loggedRuns[idx] ? loggedRuns[idx].distanceKm : 0
+    const daysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const today = new Date();
+    const result = [];
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const dateKey = `${year}-${month}-${day}`;
+
+      const dayKm = allRuns
+        .filter(r => r.logDate === dateKey)
+        .reduce((sum, r) => sum + r.distanceKm, 0);
+
+      result.push({
+        day: daysShort[d.getDay()],
+        date: dateKey,
+        km: parseFloat(dayKm.toFixed(1))
+      });
+    }
+    return result;
+  }, [allRuns]);
+
+  // Dynamic Recomposition Trajectory from Actual User Scale Logs
+  const weightTrendData = useMemo(() => {
+    const runsWithWeight = allRuns
+      .filter(r => r.weightKg && r.weightKg > 0)
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+
+    if (runsWithWeight.length === 0) {
+      return [];
+    }
+
+    return runsWithWeight.map((r, idx) => ({
+      entry: `D${idx + 1}`,
+      weight: r.weightKg,
+      date: r.logDate
     }));
-  }, [loggedRuns]);
+  }, [allRuns]);
 
   // Local ML Recovery Diagnosis Execution
   const handleRunDiagnosis = async () => {
@@ -319,8 +361,8 @@ export default function App() {
         totalWorkoutStrain,
         totalRunStrain,
         totalRunKm,
-        restingHr: RESTING_HR_BASELINE,
-        workoutDurationMin: Math.max(30, workoutList.length * 15),
+        restingHr: userRestingHr,
+        workoutDurationMin: Math.max(20, workoutList.length * 15),
       });
       setMlPlan(plan);
     } catch (err: any) {
@@ -330,7 +372,7 @@ export default function App() {
     }
   };
 
-  // CRUD Handlers (Attach userId to each write)
+  // CRUD Handlers
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -486,7 +528,8 @@ export default function App() {
     e.preventDefault();
     const km = parseFloat(runDistance) || 0;
     const duration = parseFloat(runDuration) || 0;
-    const hr = parseInt(avgHeartRate) || 135;
+    const hr = parseInt(avgHeartRate) || 140;
+    const recordedWeight = parseFloat(bodyWeight) || 0;
     if (!km || !duration || !currentUser) return;
 
     const calculatedStrain = parseFloat((km * Math.pow(hr / 100, 2) * 1.2).toFixed(1));
@@ -496,9 +539,11 @@ export default function App() {
       durationMin: duration,
       avgHr: hr,
       strain: calculatedStrain,
+      weightKg: recordedWeight > 0 ? recordedWeight : undefined,
       date: new Date().toLocaleDateString("en-US", { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
       logDate: todayKey,
-      userId: currentUser.uid
+      userId: currentUser.uid,
+      createdAt: new Date().toISOString()
     };
 
     setAllRuns(prev => [newRun, ...prev]);
@@ -512,8 +557,8 @@ export default function App() {
           date: newRun.date,
           logDate: todayKey,
           userId: currentUser.uid,
-          weightKg: parseFloat(bodyWeight) || 0,
-          createdAt: new Date().toISOString(),
+          weightKg: recordedWeight > 0 ? recordedWeight : null,
+          createdAt: newRun.createdAt,
         });
         setStatusMessage("SAVED TO PRIVATE CLOUD.");
       } catch {
@@ -608,7 +653,7 @@ export default function App() {
                 </div>
                 <h3 className="text-xl font-black uppercase mt-1">Adaptive Recovery Diagnosis</h3>
                 <p className="text-xs font-bold text-zinc-600 uppercase">
-                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and resting HR ({RESTING_HR_BASELINE} BPM)
+                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and resting HR ({userRestingHr} BPM)
                 </p>
               </div>
 
@@ -705,13 +750,17 @@ export default function App() {
               <div className="bg-white border-4 border-black p-6 brutal-shadow">
                 <span className="text-xs font-black uppercase text-zinc-600">Resting HR Diagnostic</span>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-3xl font-black">{RESTING_HR_BASELINE}</span>
+                  <span className="text-3xl font-black">{userRestingHr}</span>
                   <span className="text-sm font-bold uppercase text-zinc-500">BPM</span>
                 </div>
                 <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm mt-3 text-center">
-                  <span className="text-xs font-black uppercase">Parasympathetic Homeostasis</span>
+                  <span className="text-xs font-black uppercase">
+                    {allRuns.length > 0 ? "Calibrated from Run Logs" : "Awaiting Activity Session"}
+                  </span>
                 </div>
-                <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">Optimal autonomic nervous balance</span>
+                <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">
+                  {allRuns.length > 0 ? "Autonomic nervous equilibrium" : "Log a running session to calibrate HR"}
+                </span>
               </div>
             </div>
           </div>
@@ -765,7 +814,17 @@ export default function App() {
                     <div key={run.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
                       <div>
                         <div className="flex items-center gap-2"><h4 className="font-black text-base uppercase">{run.distanceKm} KM RUN</h4><span className="text-[10px] font-bold bg-zinc-200 border border-black px-1.5 py-0.5 uppercase">{run.date}</span></div>
-                        <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase"><span>{run.durationMin} MINS</span><span>•</span><span>{run.avgHr} AVG BPM</span></div>
+                        <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase">
+                          <span>{run.durationMin} MINS</span>
+                          <span>•</span>
+                          <span>{run.avgHr} AVG BPM</span>
+                          {run.weightKg && (
+                            <>
+                              <span>•</span>
+                              <span className="text-black font-black">{run.weightKg} KG</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-black text-sm bg-[#FF5C00] text-white border border-black px-2 py-0.5">{run.strain}</span>
@@ -994,7 +1053,7 @@ export default function App() {
                         <XAxis dataKey="day" stroke="#000" tick={{ fill: '#000', fontSize: 13, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} />
                         <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} domain={[0, historyMetric === "protein" ? 220 : 3000]} />
                         <Tooltip contentStyle={{ backgroundColor: '#FFE600', border: '2px solid black', color: '#000', fontWeight: 'bold', fontSize: 12 }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.fullDate || ""} />
-                        <ReferenceLine y={historyMetric === "protein" ? PROTEIN_TARGET : CALORIE_TARGET} stroke="#000" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Avg Target', fill: '#000', fontSize: 11, fontWeight: 'bold', position: 'right' }} />
+                        <ReferenceLine y={historyMetric === "protein" ? PROTEIN_TARGET : CALORIE_TARGET} stroke="#000" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Target', fill: '#000', fontSize: 11, fontWeight: 'bold', position: 'right' }} />
                         <Area type="monotone" dataKey={historyMetric === "protein" ? "proteinAvg" : "caloriesAvg"} stroke="#000" strokeWidth={2} fill="url(#brutalDiagonalHatch)" />
                         <Bar dataKey={historyMetric === "protein" ? "protein" : "calories"} fill={historyMetric === "protein" ? "#00FFA3" : "#FF5C00"} stroke="#000" strokeWidth={2} barSize={18} radius={[6, 6, 0, 0]} />
                       </ComposedChart>
@@ -1005,10 +1064,6 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <span className={`w-3.5 h-3.5 border border-black inline-block ${historyMetric === "protein" ? "bg-[#00FFA3]" : "bg-[#FF5C00]"}`} />
                       <span className="text-black">{historyMetric === "protein" ? "Daily Protein Intake (g)" : "Daily Caloric Intake (kcal)"}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-4 h-3.5 border border-black bg-[radial-gradient(#000_1px,transparent_1px)] [background-size:4px_4px] opacity-75 inline-block" />
-                      <span className="text-zinc-600">Weekly Moving Average Profile</span>
                     </div>
                   </div>
                 </section>
@@ -1076,14 +1131,14 @@ export default function App() {
               </div>
               <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
                 <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Resting HR</span><HeartPulse className="w-5 h-5 text-[#FF5C00]" /></div>
-                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{RESTING_HR_BASELINE}</span><span className="text-xs font-bold uppercase">BPM</span></div>
+                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{userRestingHr}</span><span className="text-xs font-bold uppercase">BPM</span></div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-white border-4 border-black p-6 brutal-shadow">
                 <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
-                  <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Activity className="w-4 h-4 text-[#FF5C00]" /> Running Volume Distribution</h3>
+                  <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Activity className="w-4 h-4 text-[#FF5C00]" /> Running Volume (Past 7 Days)</h3>
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1099,17 +1154,24 @@ export default function App() {
 
               <div className="bg-white border-4 border-black p-6 brutal-shadow">
                 <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
-                  <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Dumbbell className="w-4 h-4" /> Recomposition Trajectory</h3>
+                  <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Dumbbell className="w-4 h-4" /> Body Scale Weight Trend</h3>
                 </div>
                 <div className="h-64 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={STATIC_RECOMP}>
-                      <XAxis dataKey="day" stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} />
-                      <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} domain={['dataMin - 1', 'dataMax + 1']} />
-                      <Tooltip contentStyle={{ backgroundColor: '#00FFA3', border: '2px solid black', fontWeight: 'bold' }} />
-                      <Area type="monotone" dataKey="weight" stroke="#000" strokeWidth={3} fill="#FFE600" />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {weightTrendData.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-black bg-[#F4F0EA] p-6 text-center">
+                      <span className="font-black text-xs uppercase text-zinc-600">No Scale Entries Yet</span>
+                      <p className="text-[11px] font-bold text-zinc-500 mt-1 uppercase">Enter scale weight (kg) when logging a run to plot your trajectory.</p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={weightTrendData}>
+                        <XAxis dataKey="entry" stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} />
+                        <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} domain={['dataMin - 1', 'dataMax + 1']} />
+                        <Tooltip contentStyle={{ backgroundColor: '#00FFA3', border: '2px solid black', fontWeight: 'bold' }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.date || ""} />
+                        <Area type="monotone" dataKey="weight" stroke="#000" strokeWidth={3} fill="#FFE600" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
             </div>
