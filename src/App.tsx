@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { 
   Activity,
   Dumbbell, 
-  HeartPulse, 
   Zap, 
   Sparkles, 
   Trash2, 
@@ -20,7 +19,11 @@ import {
   Clock, 
   Loader2, 
   ArrowRight,
-  UserCheck
+  UserCheck,
+  LogOut,
+  Lock,
+  Mail,
+  KeyRound
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -35,7 +38,13 @@ import {
   ReferenceLine as ReferenceLineOrig 
 } from "recharts";
 import { db, auth } from "./lib/firebase";
-import { signInAnonymously, onAuthStateChanged, type User } from "firebase/auth";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged, 
+  type User 
+} from "firebase/auth";
 import { 
   collection, 
   addDoc, 
@@ -77,7 +86,6 @@ interface RunItem {
   id: string;
   distanceKm: number;
   durationMin: number;
-  avgHr: number;
   strain: number;
   weightKg?: number;
   date: string;
@@ -122,7 +130,15 @@ export default function App() {
   const [historyMetric, setHistoryMetric] = useState<"protein" | "calories">("protein");
   const todayKey = getTodayDateKey();
 
+  // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(todayKey);
 
   // Recovery ML State
@@ -158,39 +174,69 @@ export default function App() {
 
   const [runDistance, setRunDistance] = useState("");
   const [runDuration, setRunDuration] = useState("");
-  const [avgHeartRate, setAvgHeartRate] = useState("");
   const [bodyWeight, setBodyWeight] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
-  // User Target Settings (Clean Defaults)
   const CALORIE_TARGET = 2200;
   const PROTEIN_TARGET = 165;
   const OPTIMAL_STRAIN_LIMIT = 120.0;
 
-  // Derive dynamic resting HR based on user's logged activity or uncalibrated fallback
-  const userRestingHr = useMemo(() => {
-    const runsWithHr = allRuns.filter(r => r.avgHr > 0);
-    if (runsWithHr.length === 0) return 60; // Uncalibrated baseline
-    const avgRecent = runsWithHr.slice(0, 5).reduce((acc, curr) => acc + curr.avgHr, 0) / Math.min(5, runsWithHr.length);
-    return Math.round(avgRecent * 0.42); // Estimate resting autonomic tone from aerobic capacity
-  }, [allRuns]);
-
-  // Authenticate user anonymously on startup
+  // Listen for Firebase Auth State Changes
   useEffect(() => {
-    if (!auth) return;
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setCurrentUser(user);
-      } else {
-        signInAnonymously(auth).catch((err) => console.error("Anonymous auth failed:", err));
-      }
+    if (!auth) {
+      setAuthLoading(false);
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setAuthLoading(false);
     });
-    return () => unsubAuth();
+    return () => unsubscribe();
   }, []);
 
-  // Fetch only documents matching currentUser.uid
+  // Handle Login & Signup
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim()) {
+      setAuthError("Please fill out both email and password.");
+      return;
+    }
+    setAuthError("");
+    setAuthSubmitting(true);
+
+    try {
+      if (authMode === "signup") {
+        await createUserWithEmailAndPassword(auth, email.trim(), password);
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
+      setEmail("");
+      setPassword("");
+    } catch (err: any) {
+      const msg = err.code ? err.code.replace("auth/", "").replace(/-/g, " ").toUpperCase() : err.message;
+      setAuthError(msg);
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!auth) return;
+    await signOut(auth);
+    setAllWorkoutHistory([]);
+    setAllFoodLogs([]);
+    setAllRuns([]);
+    setMlPlan(null);
+  };
+
+  // Fetch Documents Scoped Exclusively to currentUser.uid
   useEffect(() => {
-    if (!db || !currentUser) return;
+    if (!db || !currentUser) {
+      setAllWorkoutHistory([]);
+      setAllFoodLogs([]);
+      setAllRuns([]);
+      return;
+    }
 
     try {
       const qWorkouts = query(collection(db, "workouts"), where("userId", "==", currentUser.uid));
@@ -227,7 +273,6 @@ export default function App() {
           id: docSnap.id,
           distanceKm: docSnap.data().distanceKm,
           durationMin: docSnap.data().durationMin,
-          avgHr: docSnap.data().avgHr,
           strain: docSnap.data().strain,
           weightKg: docSnap.data().weightKg,
           date: docSnap.data().date,
@@ -261,7 +306,6 @@ export default function App() {
     ? "OPTIMAL ADAPTATION" 
     : "UNDER-LOADED";
 
-  // Dynamic Weekly Bar/Average Data
   const historyWeeklyChartData = useMemo(() => {
     const daysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const [y, m, d] = selectedHistoryDate.split("-").map(Number);
@@ -304,7 +348,6 @@ export default function App() {
     return FOOD_DATABASE.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [searchQuery]);
 
-  // Dynamic Running Volume Distribution (Past 7 Days)
   const runChartData = useMemo(() => {
     const daysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const today = new Date();
@@ -331,15 +374,12 @@ export default function App() {
     return result;
   }, [allRuns]);
 
-  // Dynamic Recomposition Trajectory from Actual User Scale Logs
   const weightTrendData = useMemo(() => {
     const runsWithWeight = allRuns
       .filter(r => r.weightKg && r.weightKg > 0)
       .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 
-    if (runsWithWeight.length === 0) {
-      return [];
-    }
+    if (runsWithWeight.length === 0) return [];
 
     return runsWithWeight.map((r, idx) => ({
       entry: `D${idx + 1}`,
@@ -348,7 +388,6 @@ export default function App() {
     }));
   }, [allRuns]);
 
-  // Local ML Recovery Diagnosis Execution
   const handleRunDiagnosis = async () => {
     setMlLoading(true);
     setMlError("");
@@ -361,7 +400,7 @@ export default function App() {
         totalWorkoutStrain,
         totalRunStrain,
         totalRunKm,
-        restingHr: userRestingHr,
+        restingHr: 60,
         workoutDurationMin: Math.max(20, workoutList.length * 15),
       });
       setMlPlan(plan);
@@ -372,7 +411,6 @@ export default function App() {
     }
   };
 
-  // CRUD Handlers
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -528,16 +566,16 @@ export default function App() {
     e.preventDefault();
     const km = parseFloat(runDistance) || 0;
     const duration = parseFloat(runDuration) || 0;
-    const hr = parseInt(avgHeartRate) || 140;
     const recordedWeight = parseFloat(bodyWeight) || 0;
     if (!km || !duration || !currentUser) return;
 
-    const calculatedStrain = parseFloat((km * Math.pow(hr / 100, 2) * 1.2).toFixed(1));
+    const BASELINE_AEROBIC_HR = 140;
+    const calculatedStrain = parseFloat((km * Math.pow(BASELINE_AEROBIC_HR / 100, 2) * 1.2).toFixed(1));
+    
     const newRun: RunItem = {
       id: Date.now().toString(),
       distanceKm: km,
       durationMin: duration,
-      avgHr: hr,
       strain: calculatedStrain,
       weightKg: recordedWeight > 0 ? recordedWeight : undefined,
       date: new Date().toLocaleDateString("en-US", { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
@@ -552,7 +590,6 @@ export default function App() {
         await addDoc(collection(db, "run_logs"), {
           distanceKm: km,
           durationMin: duration,
-          avgHr: hr,
           strain: calculatedStrain,
           date: newRun.date,
           logDate: todayKey,
@@ -565,7 +602,7 @@ export default function App() {
         setStatusMessage("SAVED LOCALLY.");
       }
     }
-    setRunDistance(""); setRunDuration(""); setAvgHeartRate(""); setBodyWeight("");
+    setRunDistance(""); setRunDuration(""); setBodyWeight("");
     setTimeout(() => setStatusMessage(""), 3000);
   };
 
@@ -576,6 +613,114 @@ export default function App() {
     }
   };
 
+  // 1. Loading Initial Session
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4">
+        <div className="bg-white border-4 border-black p-8 brutal-shadow-lg text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#FF5C00]" />
+          <h2 className="text-xl font-black uppercase tracking-tight">Initializing KINETIQ Core...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Authentication Gate: Display Login / Signup Screen
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4 selection:bg-[#FFE600] selection:text-black">
+        <div className="max-w-md w-full bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
+          <div className="border-b-4 border-black pb-4 text-center">
+            <div className="inline-flex items-center gap-2 bg-[#FFE600] border-2 border-black px-4 py-2 brutal-shadow-sm font-black text-2xl tracking-tighter mx-auto">
+              <Flame className="w-6 h-6 text-black" /> KINETIQ
+            </div>
+            <p className="text-xs uppercase font-black tracking-widest mt-3 text-zinc-700">
+              ADAPTIVE PERFORMANCE & METABOLIC PORTAL
+            </p>
+          </div>
+
+          <div className="flex border-2 border-black bg-[#F4F0EA] brutal-shadow-sm p-1">
+            <button
+              type="button"
+              onClick={() => { setAuthMode("login"); setAuthError(""); }}
+              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "login" ? "bg-black text-white" : "text-black hover:bg-[#FFE600]"}`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode("signup"); setAuthError(""); }}
+              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "signup" ? "bg-[#00FFA3] text-black" : "text-black hover:bg-[#FFE600]"}`}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authError && (
+            <div className="bg-red-200 border-2 border-black p-3 brutal-shadow-sm flex items-start gap-2 text-red-900 text-xs font-black uppercase">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="block text-xs font-black uppercase flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5" /> Email Address
+              </label>
+              <input
+                type="email"
+                required
+                placeholder="athlete@domain.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-black uppercase flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5" /> Password
+              </label>
+              <input
+                type="password"
+                required
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={authSubmitting}
+              className="w-full bg-[#FF5C00] text-white border-2 border-black p-4 font-black uppercase tracking-wider text-sm brutal-shadow brutal-btn-active flex items-center justify-center gap-2 mt-4"
+            >
+              {authSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : authMode === "login" ? (
+                <Lock className="w-4 h-4" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4" />
+              )}
+              {authSubmitting
+                ? "Verifying..."
+                : authMode === "login"
+                ? "Enter Dashboard"
+                : "Create Private Engine"}
+            </button>
+          </form>
+
+          <p className="text-[10px] text-center font-bold text-zinc-600 uppercase">
+            All biometrics, workouts, and macro logs are isolated to your authenticated account.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Authenticated Application
   return (
     <div className="min-h-screen bg-[#F4F0EA] p-4 md:p-8 selection:bg-[#FFE600] selection:text-black font-mono">
       {/* Header */}
@@ -588,24 +733,32 @@ export default function App() {
             <span className="bg-[#00FFA3] border-2 border-black px-2 py-0.5 text-xs font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" /> {todayKey}
             </span>
-            {currentUser && (
-              <span className="bg-white border-2 border-black px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1 text-zinc-600">
-                <UserCheck className="w-3 h-3 text-[#00FFA3]" /> Private Session
-              </span>
-            )}
+            <span className="bg-white border-2 border-black px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1 text-zinc-600">
+              <UserCheck className="w-3 h-3 text-[#00FFA3]" /> {currentUser.email}
+            </span>
           </div>
           <p className="text-xs uppercase font-bold tracking-widest mt-2 text-zinc-700">
             ADAPTIVE HUMAN PERFORMANCE & METABOLIC ENGINE
           </p>
         </div>
 
-        <nav className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <button onClick={() => setActiveTab("overview")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}>Dashboard</button>
-          <button onClick={() => setActiveTab("recovery")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><ShieldCheck className="w-4 h-4" /> Recovery</button>
-          <button onClick={() => setActiveTab("nutrition")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : "bg-white text-black"}`}><UtensilsCrossed className="w-4 h-4" /> Macros</button>
-          <button onClick={() => setActiveTab("workouts")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}><Dumbbell className="w-4 h-4" /> Workouts</button>
-          <button onClick={() => setActiveTab("run")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><Footprints className="w-4 h-4" /> Run</button>
-        </nav>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <nav className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <button onClick={() => setActiveTab("overview")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}>Dashboard</button>
+            <button onClick={() => setActiveTab("recovery")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><ShieldCheck className="w-4 h-4" /> Recovery</button>
+            <button onClick={() => setActiveTab("nutrition")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : "bg-white text-black"}`}><UtensilsCrossed className="w-4 h-4" /> Macros</button>
+            <button onClick={() => setActiveTab("workouts")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}><Dumbbell className="w-4 h-4" /> Workouts</button>
+            <button onClick={() => setActiveTab("run")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><Footprints className="w-4 h-4" /> Run</button>
+          </nav>
+          
+          <button
+            onClick={handleLogout}
+            title="Sign Out"
+            className="p-2 border-2 border-black bg-white text-black hover:bg-red-500 hover:text-white brutal-shadow-sm brutal-btn-active"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </header>
 
       <main className="max-w-7xl mx-auto space-y-8">
@@ -653,7 +806,7 @@ export default function App() {
                 </div>
                 <h3 className="text-xl font-black uppercase mt-1">Adaptive Recovery Diagnosis</h3>
                 <p className="text-xs font-bold text-zinc-600 uppercase">
-                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and resting HR ({userRestingHr} BPM)
+                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and metabolic demands
                 </p>
               </div>
 
@@ -730,7 +883,7 @@ export default function App() {
                 </div>
                 <p className="text-xs font-bold text-zinc-700 mt-4 leading-relaxed">
                   {combinedTotalStrain > OPTIMAL_STRAIN_LIMIT 
-                    ? "Strain threshold exceeded! Elevated risk of catabolism and nervous system fatigue." 
+                    ? "Strain threshold exceeded! Elevated risk of catabolism and central nervous fatigue." 
                     : "Training load is within optimal physiological limits for muscular and mitochondrial recovery."}
                 </p>
               </div>
@@ -748,18 +901,18 @@ export default function App() {
               </div>
 
               <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                <span className="text-xs font-black uppercase text-zinc-600">Resting HR Diagnostic</span>
+                <span className="text-xs font-black uppercase text-zinc-600">Protein Synthesis Buffer</span>
                 <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-3xl font-black">{userRestingHr}</span>
-                  <span className="text-sm font-bold uppercase text-zinc-500">BPM</span>
+                  <span className="text-3xl font-black">{totalProteinConsumed}g</span>
+                  <span className="text-sm font-bold uppercase text-zinc-500">/ {PROTEIN_TARGET}g</span>
                 </div>
                 <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm mt-3 text-center">
                   <span className="text-xs font-black uppercase">
-                    {allRuns.length > 0 ? "Calibrated from Run Logs" : "Awaiting Activity Session"}
+                    {totalProteinConsumed >= PROTEIN_TARGET ? "Full Anabolic State" : "Protein Deficit Pending"}
                   </span>
                 </div>
                 <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">
-                  {allRuns.length > 0 ? "Autonomic nervous equilibrium" : "Log a running session to calibrate HR"}
+                  {totalProteinConsumed >= PROTEIN_TARGET ? "Optimal hyperaminoacidemia maintained" : "Consume adequate protein to avoid catabolism"}
                 </span>
               </div>
             </div>
@@ -771,8 +924,15 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <section className="lg:col-span-5 bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
               <div className="border-b-2 border-black pb-4">
-                <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2"><Footprints className="w-6 h-6 text-[#FF5C00]" /> Record Running Session</h3>
-                <p className="text-xs font-bold text-zinc-600 uppercase">Run Strain = Distance × (AvgHR / 100)² × 1.2</p>
+                <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
+                  <Footprints className="w-6 h-6 text-[#FF5C00]" /> Record Running Session
+                </h3>
+                <p className="text-xs font-bold text-zinc-700 uppercase mt-1">
+                  Run Strain = Distance × (AvgHR / 100)² × 1.2
+                </p>
+                <div className="mt-2.5 p-2 bg-[#FFE600] border-2 border-black text-[11px] font-bold text-black uppercase leading-snug brutal-shadow-sm">
+                  ⚡ Calculated using an ideal aerobic baseline (140 BPM). Real-time precision is achieved when synced with a wearable device.
+                </div>
               </div>
 
               <form onSubmit={handleManualRunSubmit} className="space-y-4">
@@ -785,11 +945,7 @@ export default function App() {
                   <input type="number" placeholder="e.g. 45" value={runDuration} onChange={(e) => setRunDuration(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase">Average Heart Rate (BPM)</label>
-                  <input type="number" placeholder="e.g. 142" value={avgHeartRate} onChange={(e) => setAvgHeartRate(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase">Scale Weight (KG)</label>
+                  <label className="block text-xs font-black uppercase">Scale Weight (KG) - Optional</label>
                   <input type="number" step="0.1" placeholder="e.g. 77.4" value={bodyWeight} onChange={(e) => setBodyWeight(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
                 </div>
 
@@ -816,8 +972,6 @@ export default function App() {
                         <div className="flex items-center gap-2"><h4 className="font-black text-base uppercase">{run.distanceKm} KM RUN</h4><span className="text-[10px] font-bold bg-zinc-200 border border-black px-1.5 py-0.5 uppercase">{run.date}</span></div>
                         <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase">
                           <span>{run.durationMin} MINS</span>
-                          <span>•</span>
-                          <span>{run.avgHr} AVG BPM</span>
                           {run.weightKg && (
                             <>
                               <span>•</span>
@@ -1130,8 +1284,8 @@ export default function App() {
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{totalProteinConsumed}</span><span className="text-xs font-bold uppercase">/ {PROTEIN_TARGET}g</span></div>
               </div>
               <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
-                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Resting HR</span><HeartPulse className="w-5 h-5 text-[#FF5C00]" /></div>
-                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{userRestingHr}</span><span className="text-xs font-bold uppercase">BPM</span></div>
+                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Daily Calorie Target</span><Flame className="w-5 h-5 text-[#FF5C00]" /></div>
+                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{CALORIE_TARGET}</span><span className="text-xs font-bold uppercase">KCAL</span></div>
               </div>
             </div>
 
