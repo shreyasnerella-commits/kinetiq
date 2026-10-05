@@ -25,7 +25,10 @@ import {
   Mail,
   KeyRound,
   Menu,
-  X
+  X,
+  Settings,
+  Scale,
+  Target
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -54,7 +57,9 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  where 
+  where,
+  setDoc,
+  getDoc
 } from "firebase/firestore";
 import { FOOD_DATABASE, type FoodPreset } from "./data/foodDatabase";
 import { 
@@ -107,6 +112,8 @@ interface LoggedFoodItem {
   userId?: string;
 }
 
+type FitnessGoal = "cut" | "maintain" | "bulk";
+
 const PRESET_EXERCISES = [
   "Barbell Back Squat",
   "Romanian Deadlift",
@@ -131,6 +138,7 @@ export default function App() {
   const [nutritionSubTab, setNutritionSubTab] = useState<"add" | "history">("add");
   const [historyMetric, setHistoryMetric] = useState<"protein" | "calories">("protein");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const todayKey = getTodayDateKey();
 
   // Authentication State
@@ -141,6 +149,11 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // User Profile & Macro Goal State
+  const [userProfileWeight, setUserProfileWeight] = useState<number>(75);
+  const [userGoal, setUserGoal] = useState<FitnessGoal>("maintain");
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(todayKey);
 
@@ -180,8 +193,27 @@ export default function App() {
   const [bodyWeight, setBodyWeight] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
-  const CALORIE_TARGET = 2200;
-  const PROTEIN_TARGET = 165;
+  // Dynamically calculate calorie & protein targets based on weight & chosen goal
+  const { calorieTarget, proteinTarget } = useMemo(() => {
+    const w = Math.max(35, userProfileWeight || 70);
+    if (userGoal === "cut") {
+      return {
+        calorieTarget: Math.round(w * 28),
+        proteinTarget: Math.round(w * 2.2)
+      };
+    }
+    if (userGoal === "bulk") {
+      return {
+        calorieTarget: Math.round(w * 38),
+        proteinTarget: Math.round(w * 1.8)
+      };
+    }
+    return {
+      calorieTarget: Math.round(w * 33),
+      proteinTarget: Math.round(w * 2.0)
+    };
+  }, [userProfileWeight, userGoal]);
+
   const OPTIMAL_STRAIN_LIMIT = 120.0;
 
   // Listen for Firebase Auth State Changes
@@ -196,6 +228,23 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Fetch or initialize user profile metrics
+  useEffect(() => {
+    if (!db || !currentUser) return;
+    const fetchProfile = async () => {
+      try {
+        const userDocRef = doc(db, "user_profiles", currentUser.uid);
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.weight) setUserProfileWeight(data.weight);
+          if (data.goal) setUserGoal(data.goal);
+        }
+      } catch {}
+    };
+    fetchProfile();
+  }, [currentUser]);
 
   // Handle Login & Signup
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -230,6 +279,21 @@ export default function App() {
     setAllFoodLogs([]);
     setAllRuns([]);
     setMlPlan(null);
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !db) return;
+    setSavingProfile(true);
+    try {
+      await setDoc(doc(db, "user_profiles", currentUser.uid), {
+        weight: userProfileWeight,
+        goal: userGoal,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setIsProfileModalOpen(false);
+    } catch {}
+    setSavingProfile(false);
   };
 
   // Fetch Documents Scoped Exclusively to currentUser.uid
@@ -397,9 +461,9 @@ export default function App() {
     try {
       const plan = await predictWhoopRecovery({
         proteinConsumed: totalProteinConsumed,
-        proteinTarget: PROTEIN_TARGET,
+        proteinTarget: proteinTarget,
         caloriesConsumed: totalCaloriesConsumed,
-        calorieTarget: CALORIE_TARGET,
+        calorieTarget: calorieTarget,
         totalWorkoutStrain,
         totalRunStrain,
         totalRunKm,
@@ -414,7 +478,6 @@ export default function App() {
     }
   };
 
-  // Workout Add Handler
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -727,27 +790,38 @@ export default function App() {
   // 3. Authenticated Application
   return (
     <div className="min-h-screen bg-[#F4F0EA] p-4 md:p-8 selection:bg-[#FFE600] selection:text-black font-mono">
-      {/* Collapsible Header */}
+      {/* Header with Menu on Left and Clickable Profile Badge */}
       <header className="max-w-7xl mx-auto mb-6 border-b-4 border-black pb-4">
-        <div className="flex items-center justify-between gap-3">
-          {/* Brand & Badge */}
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          {/* Left Group: Menu Toggle + Brand Logo */}
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="px-3.5 py-1.5 border-2 border-black bg-[#FFE600] text-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center gap-1.5"
+            >
+              {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              <span>{isMenuOpen ? "Close" : "Menu"}</span>
+            </button>
+
             <div className="bg-[#FFE600] border-2 border-black px-3 py-1.5 brutal-shadow-sm font-black text-xl tracking-tighter flex items-center gap-1.5">
               <Flame className="w-5 h-5 text-black" /> KINETIQ
             </div>
+
             <span className="bg-[#00FFA3] border-2 border-black px-2 py-1 text-[11px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
               <Calendar className="w-3 h-3" /> {todayKey}
             </span>
           </div>
 
-          {/* Action Group: Toggle Button & Logout */}
+          {/* Right Group: Clickable Gmail Profile Badge + Logout */}
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="px-3 py-1.5 border-2 border-black bg-[#FFE600] text-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center gap-1.5"
+              onClick={() => setIsProfileModalOpen(true)}
+              title="Click to calibrate your Weight & Goals"
+              className="bg-white border-2 border-black px-2.5 py-1 text-xs font-bold uppercase tracking-wider brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 text-zinc-800 hover:bg-[#FFE600]"
             >
-              {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-              <span>{isMenuOpen ? "Close" : "Menu"}</span>
+              <UserCheck className="w-3.5 h-3.5 text-[#00FFA3]" />
+              <span className="truncate max-w-[140px] sm:max-w-[200px]">{currentUser.email}</span>
+              <Settings className="w-3 h-3 text-zinc-500 ml-1" />
             </button>
 
             <button
@@ -764,9 +838,12 @@ export default function App() {
         {isMenuOpen && (
           <div className="mt-4 pt-4 border-t-2 border-dashed border-black">
             <div className="flex items-center justify-between pb-2 mb-3 border-b border-black/20">
-              <span className="text-[10px] font-bold uppercase text-zinc-600 flex items-center gap-1">
-                <UserCheck className="w-3 h-3 text-[#00FFA3]" /> {currentUser.email}
-              </span>
+              <button 
+                onClick={() => setIsProfileModalOpen(true)}
+                className="text-[11px] font-bold uppercase text-black hover:underline flex items-center gap-1"
+              >
+                <Target className="w-3.5 h-3.5 text-[#FF5C00]" /> Goal: {userGoal.toUpperCase()} ({userProfileWeight} KG)
+              </button>
               <span className="text-[10px] font-black uppercase bg-black text-white px-1.5 py-0.5">
                 Active: {activeTab.toUpperCase()}
               </span>
@@ -811,6 +888,87 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* Target Calibration & Profile Modal (Triggered by Clicking Gmail) */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-4 border-black p-6 md:p-8 max-w-md w-full brutal-shadow-lg space-y-5 animate-in fade-in duration-150">
+            <div className="flex justify-between items-center border-b-2 border-black pb-3">
+              <div className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-[#FF5C00]" />
+                <h3 className="font-black uppercase text-lg">Calibrate Body & Goals</h3>
+              </div>
+              <button 
+                onClick={() => setIsProfileModalOpen(false)}
+                className="p-1 border-2 border-black bg-white hover:bg-red-500 hover:text-white brutal-shadow-sm"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black uppercase">Current Body Weight (KG)</label>
+                <input 
+                  type="number" 
+                  step="0.1" 
+                  min="35" 
+                  max="250"
+                  required
+                  value={userProfileWeight} 
+                  onChange={(e) => setUserProfileWeight(parseFloat(e.target.value) || 0)} 
+                  className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black uppercase">Physiological Goal</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUserGoal("cut")}
+                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "cut" ? "bg-[#FF5C00] text-white" : "bg-[#F4F0EA]"}`}
+                  >
+                    Cut (Deficit)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserGoal("maintain")}
+                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "maintain" ? "bg-[#FFE600] text-black" : "bg-[#F4F0EA]"}`}
+                  >
+                    Recomp / Maintain
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserGoal("bulk")}
+                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "bulk" ? "bg-[#00FFA3] text-black" : "bg-[#F4F0EA]"}`}
+                  >
+                    Bulk (Surplus)
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-[#FFE600] border-2 border-black p-3 brutal-shadow-sm space-y-1">
+                <span className="text-[10px] font-black uppercase text-black block">Computed Daily Blueprint</span>
+                <p className="font-bold text-xs">
+                  Target Caloric Intake: <span className="font-black underline">{calorieTarget} kcal</span>
+                </p>
+                <p className="font-bold text-xs">
+                  Prescribed Daily Protein: <span className="font-black underline">{proteinTarget}g</span>
+                </p>
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={savingProfile}
+                className="w-full bg-[#00FFA3] text-black border-2 border-black p-3 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active mt-2"
+              >
+                {savingProfile ? "Saving..." : "Save & Apply Targets"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto space-y-8">
         {/* Banner */}
@@ -857,7 +1015,7 @@ export default function App() {
                 </div>
                 <h3 className="text-xl font-black uppercase mt-1">Adaptive Recovery Diagnosis</h3>
                 <p className="text-xs font-bold text-zinc-600 uppercase">
-                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and metabolic demands
+                  Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and target demands
                 </p>
               </div>
 
@@ -952,18 +1110,21 @@ export default function App() {
               </div>
 
               <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                <span className="text-xs font-black uppercase text-zinc-600">Protein Synthesis Buffer</span>
+                <div className="flex justify-between items-start">
+                  <span className="text-xs font-black uppercase text-zinc-600">Protein Target Buffer</span>
+                  <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
+                </div>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-3xl font-black">{totalProteinConsumed}g</span>
-                  <span className="text-sm font-bold uppercase text-zinc-500">/ {PROTEIN_TARGET}g</span>
+                  <span className="text-sm font-bold uppercase text-zinc-500">/ {proteinTarget}g</span>
                 </div>
                 <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm mt-3 text-center">
                   <span className="text-xs font-black uppercase">
-                    {totalProteinConsumed >= PROTEIN_TARGET ? "Full Anabolic State" : "Protein Deficit Pending"}
+                    {totalProteinConsumed >= proteinTarget ? "Full Anabolic State" : "Protein Deficit Pending"}
                   </span>
                 </div>
                 <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">
-                  {totalProteinConsumed >= PROTEIN_TARGET ? "Optimal hyperaminoacidemia maintained" : "Consume adequate protein to avoid catabolism"}
+                  {totalProteinConsumed >= proteinTarget ? "Optimal hyperaminoacidemia maintained" : "Consume adequate protein to avoid catabolism"}
                 </span>
               </div>
             </div>
@@ -1122,23 +1283,23 @@ export default function App() {
                   <div className="bg-white border-4 border-black p-6 brutal-shadow">
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-2"><Zap className="w-5 h-5 text-[#FF5C00]" /><span className="font-black uppercase text-sm">Protein Progress</span></div>
-                      <span className="font-black text-sm">{totalProteinConsumed}g / {PROTEIN_TARGET}g</span>
+                      <button onClick={() => setIsProfileModalOpen(true)} className="font-black text-sm underline hover:text-[#FF5C00]">{totalProteinConsumed}g / {proteinTarget}g</button>
                     </div>
                     <div className="w-full bg-[#F4F0EA] border-2 border-black h-6 p-0.5">
-                      <div className="bg-[#00FFA3] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalProteinConsumed / PROTEIN_TARGET) * 100)}%` }} />
+                      <div className="bg-[#00FFA3] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalProteinConsumed / proteinTarget) * 100)}%` }} />
                     </div>
-                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{((totalProteinConsumed / PROTEIN_TARGET) * 100).toFixed(0)}% of daily target reached</p>
+                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{((totalProteinConsumed / proteinTarget) * 100).toFixed(0)}% of daily target reached ({userGoal.toUpperCase()})</p>
                   </div>
 
                   <div className="bg-white border-4 border-black p-6 brutal-shadow">
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-2"><Flame className="w-5 h-5 text-[#FF5C00]" /><span className="font-black uppercase text-sm">Calories Consumed</span></div>
-                      <span className="font-black text-sm">{totalCaloriesConsumed} / {CALORIE_TARGET} kcal</span>
+                      <button onClick={() => setIsProfileModalOpen(true)} className="font-black text-sm underline hover:text-[#FF5C00]">{totalCaloriesConsumed} / {calorieTarget} kcal</button>
                     </div>
                     <div className="w-full bg-[#F4F0EA] border-2 border-black h-6 p-0.5">
-                      <div className="bg-[#FFE600] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalCaloriesConsumed / CALORIE_TARGET) * 100)}%` }} />
+                      <div className="bg-[#FFE600] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalCaloriesConsumed / calorieTarget) * 100)}%` }} />
                     </div>
-                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{CALORIE_TARGET - totalCaloriesConsumed >= 0 ? `${CALORIE_TARGET - totalCaloriesConsumed} kcal remaining` : `${Math.abs(CALORIE_TARGET - totalCaloriesConsumed)} kcal over target`}</p>
+                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{calorieTarget - totalCaloriesConsumed >= 0 ? `${calorieTarget - totalCaloriesConsumed} kcal remaining` : `${Math.abs(calorieTarget - totalCaloriesConsumed)} kcal over target`}</p>
                   </div>
                 </div>
 
@@ -1256,7 +1417,7 @@ export default function App() {
                         <XAxis dataKey="day" stroke="#000" tick={{ fill: '#000', fontSize: 13, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} />
                         <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} domain={[0, historyMetric === "protein" ? 220 : 3000]} />
                         <Tooltip contentStyle={{ backgroundColor: '#FFE600', border: '2px solid black', color: '#000', fontWeight: 'bold', fontSize: 12 }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.fullDate || ""} />
-                        <ReferenceLine y={historyMetric === "protein" ? PROTEIN_TARGET : CALORIE_TARGET} stroke="#000" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Target', fill: '#000', fontSize: 11, fontWeight: 'bold', position: 'right' }} />
+                        <ReferenceLine y={historyMetric === "protein" ? proteinTarget : calorieTarget} stroke="#000" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Target', fill: '#000', fontSize: 11, fontWeight: 'bold', position: 'right' }} />
                         <Area type="monotone" dataKey={historyMetric === "protein" ? "proteinAvg" : "caloriesAvg"} stroke="#000" strokeWidth={2} fill="url(#brutalDiagonalHatch)" />
                         <Bar dataKey={historyMetric === "protein" ? "protein" : "calories"} fill={historyMetric === "protein" ? "#00FFA3" : "#FF5C00"} stroke="#000" strokeWidth={2} barSize={18} radius={[6, 6, 0, 0]} />
                       </ComposedChart>
@@ -1280,12 +1441,12 @@ export default function App() {
 
                   <div className="bg-white border-4 border-black p-6 brutal-shadow">
                     <div className="flex justify-between items-center"><span className="text-xs font-black uppercase text-zinc-500">Calories on Day</span><Flame className="w-5 h-5 text-[#FF5C00]" /></div>
-                    <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayCalories}</span><span className="text-xs font-bold uppercase">/ {CALORIE_TARGET} kcal</span></div>
+                    <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayCalories}</span><span className="text-xs font-bold uppercase">/ {calorieTarget} kcal</span></div>
                   </div>
 
                   <div className="bg-white border-4 border-black p-6 brutal-shadow">
                     <div className="flex justify-between items-center"><span className="text-xs font-black uppercase text-zinc-500">Protein on Day</span><Zap className="w-5 h-5 text-[#00FFA3]" /></div>
-                    <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayProtein}</span><span className="text-xs font-bold uppercase">/ {PROTEIN_TARGET}g</span></div>
+                    <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayProtein}</span><span className="text-xs font-bold uppercase">/ {proteinTarget}g</span></div>
                   </div>
                 </div>
 
@@ -1329,12 +1490,18 @@ export default function App() {
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{combinedTotalStrain}</span><span className="text-xs font-bold uppercase">/ {OPTIMAL_STRAIN_LIMIT}</span></div>
               </div>
               <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
-                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Protein Hit</span><Zap className="w-5 h-5 text-[#00FFA3]" /></div>
-                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{totalProteinConsumed}</span><span className="text-xs font-bold uppercase">/ {PROTEIN_TARGET}g</span></div>
+                <div className="flex justify-between items-start">
+                  <span className="text-xs font-black uppercase text-zinc-500">Protein Hit</span>
+                  <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
+                </div>
+                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{totalProteinConsumed}</span><span className="text-xs font-bold uppercase">/ {proteinTarget}g</span></div>
               </div>
               <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
-                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Daily Calorie Target</span><Flame className="w-5 h-5 text-[#FF5C00]" /></div>
-                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{CALORIE_TARGET}</span><span className="text-xs font-bold uppercase">KCAL</span></div>
+                <div className="flex justify-between items-start">
+                  <span className="text-xs font-black uppercase text-zinc-500">Daily Calorie Target</span>
+                  <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
+                </div>
+                <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{calorieTarget}</span><span className="text-xs font-bold uppercase">KCAL</span></div>
               </div>
             </div>
 
