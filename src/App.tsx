@@ -28,7 +28,8 @@ import {
   X,
   Settings,
   Scale,
-  Target
+  Target,
+  UploadCloud
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -66,6 +67,7 @@ import {
   predictWhoopRecovery, 
   type RecoveryPlanResponse 
 } from "./lib/whoopML";
+import { parseGpxXml } from "./lib/gpxParser";
 
 const ResponsiveContainer = ResponsiveContainerOrig as any;
 const ComposedChart = ComposedChartOrig as any;
@@ -99,6 +101,7 @@ interface RunItem {
   logDate: string;
   userId?: string;
   createdAt?: string;
+  source?: string;
 }
 
 interface LoggedFoodItem {
@@ -162,6 +165,10 @@ export default function App() {
   const [mlLoading, setMlLoading] = useState(false);
   const [mlError, setMlError] = useState("");
 
+  // GPX Upload State
+  const [gpxUploading, setGpxUploading] = useState(false);
+  const [gpxError, setGpxError] = useState("");
+
   // Persistent Collections (Per User)
   const [allWorkoutHistory, setAllWorkoutHistory] = useState<WorkoutItem[]>([]);
   const [allFoodLogs, setAllFoodLogs] = useState<LoggedFoodItem[]>([]);
@@ -193,7 +200,7 @@ export default function App() {
   const [bodyWeight, setBodyWeight] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
-  // Dynamically calculate calorie & protein targets based on weight & chosen goal
+  // Dynamic Calorie & Protein Targets Based on Weight & Goal
   const { calorieTarget, proteinTarget } = useMemo(() => {
     const w = Math.max(35, userProfileWeight || 70);
     if (userGoal === "cut") {
@@ -346,6 +353,7 @@ export default function App() {
           logDate: docSnap.data().logDate || todayKey,
           userId: docSnap.data().userId,
           createdAt: docSnap.data().createdAt,
+          source: docSnap.data().source
         })));
       }, () => {});
 
@@ -478,6 +486,7 @@ export default function App() {
     }
   };
 
+  // Workout Add Handler
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -680,6 +689,56 @@ export default function App() {
     }
   };
 
+  // GPX Activity Parser Handler
+  const handleGpxFileDrop = async (file: File) => {
+    if (!currentUser) return;
+    if (!file.name.toLowerCase().endsWith(".gpx")) {
+      setGpxError("Please upload a valid .gpx file exported from your watch or app.");
+      return;
+    }
+    setGpxError("");
+    setGpxUploading(true);
+
+    try {
+      const text = await file.text();
+      const parsed = parseGpxXml(text);
+      const BASELINE_AEROBIC_HR = 140;
+      const calculatedStrain = parseFloat((parsed.distanceKm * Math.pow(BASELINE_AEROBIC_HR / 100, 2) * 1.2).toFixed(1));
+
+      const newRun: RunItem = {
+        id: Date.now().toString(),
+        distanceKm: parsed.distanceKm,
+        durationMin: parsed.durationMin,
+        strain: calculatedStrain,
+        date: new Date(parsed.startTime).toLocaleDateString("en-US", { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+        logDate: todayKey,
+        userId: currentUser.uid,
+        createdAt: new Date().toISOString(),
+        source: file.name
+      };
+
+      setAllRuns(prev => [newRun, ...prev]);
+      if (db) {
+        await addDoc(collection(db, "run_logs"), {
+          distanceKm: parsed.distanceKm,
+          durationMin: parsed.durationMin,
+          strain: calculatedStrain,
+          date: newRun.date,
+          logDate: todayKey,
+          userId: currentUser.uid,
+          createdAt: newRun.createdAt,
+          source: file.name
+        });
+      }
+      setStatusMessage(`IMPORTED ${parsed.distanceKm}KM FROM ${file.name.toUpperCase()}`);
+      setTimeout(() => setStatusMessage(""), 4000);
+    } catch (err: any) {
+      setGpxError(err.message || "Failed to parse GPX data.");
+    } finally {
+      setGpxUploading(false);
+    }
+  };
+
   // 1. Loading Session Gate
   if (authLoading) {
     return (
@@ -808,7 +867,7 @@ export default function App() {
             </div>
 
             <span className="bg-[#00FFA3] border-2 border-black px-2 py-1 text-[11px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
-              <Calendar className="w-3 h-3" /> {todayKey}
+              <Calendar className="w-3.5 h-3.5" /> {todayKey}
             </span>
           </div>
 
@@ -1144,6 +1203,42 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Direct Activity File Drop Zone */}
+              <div 
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleGpxFileDrop(e.dataTransfer.files[0]);
+                  }
+                }}
+                className="border-2 border-dashed border-black bg-[#F4F0EA] p-4 text-center cursor-pointer hover:bg-[#FFE600] transition-colors relative brutal-shadow-sm"
+              >
+                <input 
+                  type="file" 
+                  accept=".gpx" 
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleGpxFileDrop(e.target.files[0]);
+                    }
+                  }}
+                />
+                <UploadCloud className="w-6 h-6 mx-auto mb-1.5 text-black" />
+                <span className="block font-black text-xs uppercase">
+                  {gpxUploading ? "Parsing File..." : "Drop .GPX Activity File"}
+                </span>
+                <span className="block text-[10px] font-bold text-zinc-600 uppercase mt-0.5">
+                  Exported from Garmin, Apple Watch, Strava, or Google Fit
+                </span>
+              </div>
+
+              {gpxError && (
+                <div className="p-2 border border-black bg-red-200 text-red-900 text-[11px] font-bold uppercase">
+                  {gpxError}
+                </div>
+              )}
+
               <form onSubmit={handleManualRunSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Run Distance (KM)</label>
@@ -1178,7 +1273,13 @@ export default function App() {
                   {loggedRuns.map((run) => (
                     <div key={run.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
                       <div>
-                        <div className="flex items-center gap-2"><h4 className="font-black text-base uppercase">{run.distanceKm} KM RUN</h4><span className="text-[10px] font-bold bg-zinc-200 border border-black px-1.5 py-0.5 uppercase">{run.date}</span></div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-black text-base uppercase">{run.distanceKm} KM RUN</h4>
+                          <span className="text-[10px] font-bold bg-zinc-200 border border-black px-1.5 py-0.5 uppercase">{run.date}</span>
+                          {run.source && (
+                            <span className="text-[9px] font-bold bg-[#FFE600] border border-black px-1 py-0.5 uppercase truncate max-w-[100px]">{run.source}</span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase">
                           <span>{run.durationMin} MINS</span>
                           {run.weightKg && (
@@ -1204,7 +1305,7 @@ export default function App() {
         {/* TAB 3: WORKOUTS */}
         {activeTab === "workouts" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            <section className="lg:col-span-5 bg-white border-4 border-black p-6 brutal-shadow-lg space-y-6">
+            <section className="lg:col-span-5 bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
               <div className="border-b-2 border-black pb-4">
                 <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
                   <Dumbbell className="w-6 h-6 text-[#FF5C00]" /> Log Workout Set
