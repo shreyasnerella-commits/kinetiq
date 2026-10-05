@@ -23,7 +23,9 @@ import {
   LogOut,
   Lock,
   Mail,
-  KeyRound
+  KeyRound,
+  Menu,
+  X
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -128,6 +130,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"overview" | "workouts" | "nutrition" | "run" | "recovery">("overview");
   const [nutritionSubTab, setNutritionSubTab] = useState<"add" | "history">("add");
   const [historyMetric, setHistoryMetric] = useState<"protein" | "calories">("protein");
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const todayKey = getTodayDateKey();
 
   // Authentication State
@@ -411,6 +414,7 @@ export default function App() {
     }
   };
 
+  // Workout Add Handler
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -613,7 +617,7 @@ export default function App() {
     }
   };
 
-  // 1. Loading Initial Session
+  // 1. Loading Session Gate
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4">
@@ -625,7 +629,7 @@ export default function App() {
     );
   }
 
-  // 2. Authentication Gate: Display Login / Signup Screen
+  // 2. Authentication Gate: Login / Signup Screen
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4 selection:bg-[#FFE600] selection:text-black">
@@ -723,42 +727,89 @@ export default function App() {
   // 3. Authenticated Application
   return (
     <div className="min-h-screen bg-[#F4F0EA] p-4 md:p-8 selection:bg-[#FFE600] selection:text-black font-mono">
-      {/* Header */}
-      <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b-4 border-black pb-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm font-black text-2xl tracking-tighter flex items-center gap-2">
-              <Flame className="w-6 h-6 text-black" /> KINETIQ
+      {/* Collapsible Header */}
+      <header className="max-w-7xl mx-auto mb-6 border-b-4 border-black pb-4">
+        <div className="flex items-center justify-between gap-3">
+          {/* Brand & Badge */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="bg-[#FFE600] border-2 border-black px-3 py-1.5 brutal-shadow-sm font-black text-xl tracking-tighter flex items-center gap-1.5">
+              <Flame className="w-5 h-5 text-black" /> KINETIQ
             </div>
-            <span className="bg-[#00FFA3] border-2 border-black px-2 py-0.5 text-xs font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5" /> {todayKey}
-            </span>
-            <span className="bg-white border-2 border-black px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1 text-zinc-600">
-              <UserCheck className="w-3 h-3 text-[#00FFA3]" /> {currentUser.email}
+            <span className="bg-[#00FFA3] border-2 border-black px-2 py-1 text-[11px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> {todayKey}
             </span>
           </div>
-          <p className="text-xs uppercase font-bold tracking-widest mt-2 text-zinc-700">
-            ADAPTIVE HUMAN PERFORMANCE & METABOLIC ENGINE
-          </p>
+
+          {/* Action Group: Toggle Button & Logout */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="px-3 py-1.5 border-2 border-black bg-[#FFE600] text-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center gap-1.5"
+            >
+              {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              <span>{isMenuOpen ? "Close" : "Menu"}</span>
+            </button>
+
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              className="p-1.5 border-2 border-black bg-white text-black hover:bg-red-500 hover:text-white brutal-shadow-sm brutal-btn-active"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <nav className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <button onClick={() => setActiveTab("overview")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}>Dashboard</button>
-            <button onClick={() => setActiveTab("recovery")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><ShieldCheck className="w-4 h-4" /> Recovery</button>
-            <button onClick={() => setActiveTab("nutrition")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : "bg-white text-black"}`}><UtensilsCrossed className="w-4 h-4" /> Macros</button>
-            <button onClick={() => setActiveTab("workouts")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}><Dumbbell className="w-4 h-4" /> Workouts</button>
-            <button onClick={() => setActiveTab("run")} className={`px-3 py-2 sm:px-4 sm:py-2 border-2 border-black font-black uppercase text-xs sm:text-sm brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}><Footprints className="w-4 h-4" /> Run</button>
-          </nav>
-          
-          <button
-            onClick={handleLogout}
-            title="Sign Out"
-            className="p-2 border-2 border-black bg-white text-black hover:bg-red-500 hover:text-white brutal-shadow-sm brutal-btn-active"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
+        {/* Collapsible Navigation Drawer */}
+        {isMenuOpen && (
+          <div className="mt-4 pt-4 border-t-2 border-dashed border-black">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-black/20">
+              <span className="text-[10px] font-bold uppercase text-zinc-600 flex items-center gap-1">
+                <UserCheck className="w-3 h-3 text-[#00FFA3]" /> {currentUser.email}
+              </span>
+              <span className="text-[10px] font-black uppercase bg-black text-white px-1.5 py-0.5">
+                Active: {activeTab.toUpperCase()}
+              </span>
+            </div>
+
+            <nav className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <button 
+                onClick={() => { setActiveTab("overview"); setIsMenuOpen(false); }} 
+                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}
+              >
+                <Activity className="w-3.5 h-3.5" /> Dashboard
+              </button>
+
+              <button 
+                onClick={() => { setActiveTab("recovery"); setIsMenuOpen(false); }} 
+                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" /> Recovery
+              </button>
+
+              <button 
+                onClick={() => { setActiveTab("nutrition"); setIsMenuOpen(false); }} 
+                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : "bg-white text-black"}`}
+              >
+                <UtensilsCrossed className="w-3.5 h-3.5" /> Macros
+              </button>
+
+              <button 
+                onClick={() => { setActiveTab("workouts"); setIsMenuOpen(false); }} 
+                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}
+              >
+                <Dumbbell className="w-3.5 h-3.5" /> Workouts
+              </button>
+
+              <button 
+                onClick={() => { setActiveTab("run"); setIsMenuOpen(false); }} 
+                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 col-span-2 sm:col-span-1 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}
+              >
+                <Footprints className="w-3.5 h-3.5" /> Run
+              </button>
+            </nav>
+          </div>
+        )}
       </header>
 
       <main className="max-w-7xl mx-auto space-y-8">
@@ -927,9 +978,6 @@ export default function App() {
                 <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
                   <Footprints className="w-6 h-6 text-[#FF5C00]" /> Record Running Session
                 </h3>
-                <p className="text-xs font-bold text-zinc-700 uppercase mt-1">
-                  Run Strain = Distance × (AvgHR / 100)² × 1.2
-                </p>
                 <div className="mt-2.5 p-2 bg-[#FFE600] border-2 border-black text-[11px] font-bold text-black uppercase leading-snug brutal-shadow-sm">
                   ⚡ Calculated using an ideal aerobic baseline (140 BPM). Real-time precision is achieved when synced with a wearable device.
                 </div>
@@ -997,8 +1045,9 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <section className="lg:col-span-5 bg-white border-4 border-black p-6 brutal-shadow-lg space-y-6">
               <div className="border-b-2 border-black pb-4">
-                <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2"><Dumbbell className="w-6 h-6 text-[#FF5C00]" /> Log Workout Set</h3>
-                <p className="text-xs font-bold text-zinc-600 uppercase">Strain = (Sets × Reps × Weight) / 100</p>
+                <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
+                  <Dumbbell className="w-6 h-6 text-[#FF5C00]" /> Log Workout Set
+                </h3>
               </div>
 
               <form onSubmit={handleAddWorkout} className="space-y-4">
