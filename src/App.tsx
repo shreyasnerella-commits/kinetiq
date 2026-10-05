@@ -27,9 +27,11 @@ import {
   Menu,
   X,
   Settings,
-  Scale,
   Target,
-  UploadCloud
+  UploadCloud,
+  Moon,
+  Sun,
+  User as UserIcon
 } from "lucide-react";
 import { 
   ResponsiveContainer as ResponsiveContainerOrig, 
@@ -49,6 +51,7 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged, 
+  updatePassword,
   type User 
 } from "firebase/auth";
 import { 
@@ -137,6 +140,10 @@ const getTodayDateKey = () => {
 };
 
 export default function App() {
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem("kinetiq_theme") === "dark";
+  });
+
   const [activeTab, setActiveTab] = useState<"overview" | "workouts" | "nutrition" | "run" | "recovery">("overview");
   const [nutritionSubTab, setNutritionSubTab] = useState<"add" | "history">("add");
   const [historyMetric, setHistoryMetric] = useState<"protein" | "calories">("protein");
@@ -153,10 +160,17 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // User Profile & Macro Goal State
+  // User Profile Metrics & Bio
+  const [userName, setUserName] = useState<string>("");
+  const [userAge, setUserAge] = useState<number | "">("");
   const [userProfileWeight, setUserProfileWeight] = useState<number>(75);
   const [userGoal, setUserGoal] = useState<FitnessGoal>("maintain");
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Password Update State
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordStatus, setPasswordStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [updatingPassword, setUpdatingPassword] = useState(false);
 
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string>(todayKey);
 
@@ -199,6 +213,11 @@ export default function App() {
   const [runDuration, setRunDuration] = useState("");
   const [bodyWeight, setBodyWeight] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
+
+  // Sync theme preference
+  useEffect(() => {
+    localStorage.setItem("kinetiq_theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   // Dynamic Calorie & Protein Targets Based on Weight & Goal
   const { calorieTarget, proteinTarget } = useMemo(() => {
@@ -245,6 +264,8 @@ export default function App() {
         const docSnap = await getDoc(userDocRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
+          if (data.name) setUserName(data.name);
+          if (data.age) setUserAge(data.age);
           if (data.weight) setUserProfileWeight(data.weight);
           if (data.goal) setUserGoal(data.goal);
         }
@@ -294,13 +315,38 @@ export default function App() {
     setSavingProfile(true);
     try {
       await setDoc(doc(db, "user_profiles", currentUser.uid), {
+        name: userName.trim(),
+        age: userAge === "" ? null : Number(userAge),
         weight: userProfileWeight,
         goal: userGoal,
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      setIsProfileModalOpen(false);
+      setStatusMessage("PROFILE SAVED.");
+      setTimeout(() => setStatusMessage(""), 3000);
     } catch {}
     setSavingProfile(false);
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser || !newPassword.trim()) return;
+    if (newPassword.length < 6) {
+      setPasswordStatus({ type: "error", msg: "PASSWORD MUST BE AT LEAST 6 CHARACTERS." });
+      return;
+    }
+
+    setUpdatingPassword(true);
+    setPasswordStatus(null);
+    try {
+      await updatePassword(auth.currentUser, newPassword);
+      setPasswordStatus({ type: "success", msg: "PASSWORD UPDATED SUCCESSFULLY." });
+      setNewPassword("");
+    } catch (err: any) {
+      const msg = err.code ? err.code.replace("auth/", "").replace(/-/g, " ").toUpperCase() : err.message;
+      setPasswordStatus({ type: "error", msg: msg.includes("REQUIRES-RECENT-LOGIN") ? "PLEASE RE-LOGIN TO CHANGE PASSWORD." : msg });
+    } finally {
+      setUpdatingPassword(false);
+    }
   };
 
   // Fetch Documents Scoped Exclusively to currentUser.uid
@@ -486,7 +532,6 @@ export default function App() {
     }
   };
 
-  // Workout Add Handler
   const handleAddWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const finalExerciseName = customExercise.trim() || selectedExercise;
@@ -689,7 +734,6 @@ export default function App() {
     }
   };
 
-  // GPX Activity Parser Handler
   const handleGpxFileDrop = async (file: File) => {
     if (!currentUser) return;
     if (!file.name.toLowerCase().endsWith(".gpx")) {
@@ -739,11 +783,24 @@ export default function App() {
     }
   };
 
+  // Dynamic Theme Colors
+  const theme = {
+    bg: darkMode ? "bg-[#121212]" : "bg-[#F4F0EA]",
+    card: darkMode ? "bg-[#1E1E1E] text-white border-white" : "bg-white text-black border-black",
+    cardMuted: darkMode ? "bg-[#2A2A2A] text-white border-white" : "bg-[#F4F0EA] text-black border-black",
+    border: darkMode ? "border-white" : "border-black",
+    textSub: darkMode ? "text-zinc-400" : "text-zinc-600",
+    chartStroke: darkMode ? "#FFFFFF" : "#000000",
+    accentYellow: "bg-[#FFE600] text-black",
+    accentMint: "bg-[#00FFA3] text-black",
+    accentOrange: "bg-[#FF5C00] text-white"
+  };
+
   // 1. Loading Session Gate
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4">
-        <div className="bg-white border-4 border-black p-8 brutal-shadow-lg text-center space-y-4">
+      <div className={`min-h-screen ${theme.bg} flex items-center justify-center font-mono p-4`}>
+        <div className={`${theme.card} border-4 p-8 brutal-shadow-lg text-center space-y-4`}>
           <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#FF5C00]" />
           <h2 className="text-xl font-black uppercase tracking-tight">Initializing KINETIQ Core...</h2>
         </div>
@@ -754,29 +811,29 @@ export default function App() {
   // 2. Authentication Gate: Login / Signup Screen
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#F4F0EA] flex items-center justify-center font-mono p-4 selection:bg-[#FFE600] selection:text-black">
-        <div className="max-w-md w-full bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
-          <div className="border-b-4 border-black pb-4 text-center">
-            <div className="inline-flex items-center gap-2 bg-[#FFE600] border-2 border-black px-4 py-2 brutal-shadow-sm font-black text-2xl tracking-tighter mx-auto">
+      <div className={`min-h-screen ${theme.bg} flex items-center justify-center font-mono p-4 selection:bg-[#FFE600] selection:text-black`}>
+        <div className={`max-w-md w-full ${theme.card} border-4 p-6 md:p-8 brutal-shadow-lg space-y-6`}>
+          <div className={`border-b-4 ${theme.border} pb-4 text-center`}>
+            <div className={`inline-flex items-center gap-2 ${theme.accentYellow} border-2 border-black px-4 py-2 brutal-shadow-sm font-black text-2xl tracking-tighter mx-auto`}>
               <Flame className="w-6 h-6 text-black" /> KINETIQ
             </div>
-            <p className="text-xs uppercase font-black tracking-widest mt-3 text-zinc-700">
+            <p className={`text-xs uppercase font-black tracking-widest mt-3 ${theme.textSub}`}>
               ADAPTIVE PERFORMANCE & METABOLIC PORTAL
             </p>
           </div>
 
-          <div className="flex border-2 border-black bg-[#F4F0EA] brutal-shadow-sm p-1">
+          <div className={`flex border-2 ${theme.border} ${theme.cardMuted} brutal-shadow-sm p-1`}>
             <button
               type="button"
               onClick={() => { setAuthMode("login"); setAuthError(""); }}
-              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "login" ? "bg-black text-white" : "text-black hover:bg-[#FFE600]"}`}
+              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "login" ? "bg-black text-white" : "text-inherit hover:bg-[#FFE600] hover:text-black"}`}
             >
               Sign In
             </button>
             <button
               type="button"
               onClick={() => { setAuthMode("signup"); setAuthError(""); }}
-              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "signup" ? "bg-[#00FFA3] text-black" : "text-black hover:bg-[#FFE600]"}`}
+              className={`flex-1 py-2 font-black uppercase text-xs transition-colors ${authMode === "signup" ? "bg-[#00FFA3] text-black" : "text-inherit hover:bg-[#FFE600] hover:text-black"}`}
             >
               Create Account
             </button>
@@ -800,7 +857,7 @@ export default function App() {
                 placeholder="athlete@domain.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+                className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
               />
             </div>
 
@@ -814,7 +871,7 @@ export default function App() {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+                className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
               />
             </div>
 
@@ -838,7 +895,7 @@ export default function App() {
             </button>
           </form>
 
-          <p className="text-[10px] text-center font-bold text-zinc-600 uppercase">
+          <p className={`text-[10px] text-center font-bold uppercase ${theme.textSub}`}>
             All biometrics, workouts, and macro logs are isolated to your authenticated account.
           </p>
         </div>
@@ -848,45 +905,55 @@ export default function App() {
 
   // 3. Authenticated Application
   return (
-    <div className="min-h-screen bg-[#F4F0EA] p-4 md:p-8 selection:bg-[#FFE600] selection:text-black font-mono">
-      {/* Header with Menu on Left and Clickable Profile Badge */}
-      <header className="max-w-7xl mx-auto mb-6 border-b-4 border-black pb-4">
+    <div className={`min-h-screen ${theme.bg} p-4 md:p-8 selection:bg-[#FFE600] selection:text-black font-mono transition-colors duration-200`}>
+      {/* Header */}
+      <header className={`max-w-7xl mx-auto mb-6 border-b-4 ${theme.border} pb-4`}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          {/* Left Group: Menu Toggle + Brand Logo */}
+          {/* Left: Menu & Brand */}
           <div className="flex items-center gap-2.5">
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="px-3.5 py-1.5 border-2 border-black bg-[#FFE600] text-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center gap-1.5"
+              className={`px-3.5 py-1.5 border-2 ${theme.border} ${theme.accentYellow} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center gap-1.5`}
             >
               {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
               <span>{isMenuOpen ? "Close" : "Menu"}</span>
             </button>
 
-            <div className="bg-[#FFE600] border-2 border-black px-3 py-1.5 brutal-shadow-sm font-black text-xl tracking-tighter flex items-center gap-1.5">
+            <div className={`bg-[#FFE600] border-2 border-black text-black px-3 py-1.5 brutal-shadow-sm font-black text-xl tracking-tighter flex items-center gap-1.5`}>
               <Flame className="w-5 h-5 text-black" /> KINETIQ
             </div>
 
-            <span className="bg-[#00FFA3] border-2 border-black px-2 py-1 text-[11px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5" /> {todayKey}
+            <span className={`bg-[#00FFA3] border-2 border-black text-black px-2 py-1 text-[11px] font-bold uppercase tracking-wider brutal-shadow-sm flex items-center gap-1`}>
+              <Calendar className="w-3 h-3" /> {todayKey}
             </span>
           </div>
 
-          {/* Right Group: Clickable Gmail Profile Badge + Logout */}
+          {/* Right: Theme Toggle, Profile Badge, Logout */}
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setDarkMode(!darkMode)}
+              title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              className={`p-1.5 border-2 ${theme.border} ${theme.card} brutal-shadow-sm brutal-btn-active`}
+            >
+              {darkMode ? <Sun className="w-4 h-4 text-[#FFE600]" /> : <Moon className="w-4 h-4 text-black" />}
+            </button>
+
+            <button
               onClick={() => setIsProfileModalOpen(true)}
-              title="Click to calibrate your Weight & Goals"
-              className="bg-white border-2 border-black px-2.5 py-1 text-xs font-bold uppercase tracking-wider brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 text-zinc-800 hover:bg-[#FFE600]"
+              title="Click to view & edit Profile, Weight, and Password"
+              className={`${theme.card} border-2 ${theme.border} px-2.5 py-1 text-xs font-bold uppercase tracking-wider brutal-shadow-sm brutal-btn-active flex items-center gap-1.5 hover:bg-[#FFE600] hover:text-black`}
             >
               <UserCheck className="w-3.5 h-3.5 text-[#00FFA3]" />
-              <span className="truncate max-w-[140px] sm:max-w-[200px]">{currentUser.email}</span>
-              <Settings className="w-3 h-3 text-zinc-500 ml-1" />
+              <span className="truncate max-w-[130px] sm:max-w-[180px]">
+                {userName ? userName : currentUser.email}
+              </span>
+              <Settings className="w-3 h-3 text-zinc-400 ml-1" />
             </button>
 
             <button
               onClick={handleLogout}
               title="Sign Out"
-              className="p-1.5 border-2 border-black bg-white text-black hover:bg-red-500 hover:text-white brutal-shadow-sm brutal-btn-active"
+              className={`p-1.5 border-2 ${theme.border} ${theme.card} hover:bg-red-500 hover:text-white brutal-shadow-sm brutal-btn-active`}
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -895,15 +962,15 @@ export default function App() {
 
         {/* Collapsible Navigation Drawer */}
         {isMenuOpen && (
-          <div className="mt-4 pt-4 border-t-2 border-dashed border-black">
-            <div className="flex items-center justify-between pb-2 mb-3 border-b border-black/20">
+          <div className={`mt-4 pt-4 border-t-2 border-dashed ${theme.border}`}>
+            <div className={`flex items-center justify-between pb-2 mb-3 border-b ${theme.border}/20`}>
               <button 
                 onClick={() => setIsProfileModalOpen(true)}
-                className="text-[11px] font-bold uppercase text-black hover:underline flex items-center gap-1"
+                className={`text-[11px] font-bold uppercase ${theme.textSub} hover:underline flex items-center gap-1`}
               >
                 <Target className="w-3.5 h-3.5 text-[#FF5C00]" /> Goal: {userGoal.toUpperCase()} ({userProfileWeight} KG)
               </button>
-              <span className="text-[10px] font-black uppercase bg-black text-white px-1.5 py-0.5">
+              <span className={`text-[10px] font-black uppercase ${theme.accentMint} px-2 py-0.5 border ${theme.border}`}>
                 Active: {activeTab.toUpperCase()}
               </span>
             </div>
@@ -911,35 +978,35 @@ export default function App() {
             <nav className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               <button 
                 onClick={() => { setActiveTab("overview"); setIsMenuOpen(false); }} 
-                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}
+                className={`p-2.5 border-2 ${theme.border} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "overview" ? "bg-[#FF5C00] text-white" : `${theme.card}`}`}
               >
                 <Activity className="w-3.5 h-3.5" /> Dashboard
               </button>
 
               <button 
                 onClick={() => { setActiveTab("recovery"); setIsMenuOpen(false); }} 
-                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}
+                className={`p-2.5 border-2 ${theme.border} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "recovery" ? "bg-[#00FFA3] text-black" : `${theme.card}`}`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" /> Recovery
               </button>
 
               <button 
                 onClick={() => { setActiveTab("nutrition"); setIsMenuOpen(false); }} 
-                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : "bg-white text-black"}`}
+                className={`p-2.5 border-2 ${theme.border} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "nutrition" ? "bg-[#FFE600] text-black" : `${theme.card}`}`}
               >
                 <UtensilsCrossed className="w-3.5 h-3.5" /> Macros
               </button>
 
               <button 
                 onClick={() => { setActiveTab("workouts"); setIsMenuOpen(false); }} 
-                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : "bg-white text-black"}`}
+                className={`p-2.5 border-2 ${theme.border} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 ${activeTab === "workouts" ? "bg-[#FF5C00] text-white" : `${theme.card}`}`}
               >
                 <Dumbbell className="w-3.5 h-3.5" /> Workouts
               </button>
 
               <button 
                 onClick={() => { setActiveTab("run"); setIsMenuOpen(false); }} 
-                className={`p-2.5 border-2 border-black font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 col-span-2 sm:col-span-1 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : "bg-white text-black"}`}
+                className={`p-2.5 border-2 ${theme.border} font-black uppercase text-xs brutal-shadow-sm brutal-btn-active flex items-center justify-center gap-1.5 col-span-2 sm:col-span-1 ${activeTab === "run" ? "bg-[#00FFA3] text-black" : `${theme.card}`}`}
               >
                 <Footprints className="w-3.5 h-3.5" /> Run
               </button>
@@ -948,26 +1015,56 @@ export default function App() {
         )}
       </header>
 
-      {/* Target Calibration & Profile Modal (Triggered by Clicking Gmail) */}
+      {/* Target Calibration & Profile Modal */}
       {isProfileModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white border-4 border-black p-6 md:p-8 max-w-md w-full brutal-shadow-lg space-y-5 animate-in fade-in duration-150">
-            <div className="flex justify-between items-center border-b-2 border-black pb-3">
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className={`${theme.card} border-4 ${theme.border} p-6 md:p-8 max-w-lg w-full brutal-shadow-lg space-y-6 my-8`}>
+            <div className={`flex justify-between items-center border-b-2 ${theme.border} pb-3`}>
               <div className="flex items-center gap-2">
-                <Scale className="w-5 h-5 text-[#FF5C00]" />
-                <h3 className="font-black uppercase text-lg">Calibrate Body & Goals</h3>
+                <UserIcon className="w-5 h-5 text-[#FF5C00]" />
+                <h3 className="font-black uppercase text-lg">Athlete Profile & Settings</h3>
               </div>
               <button 
-                onClick={() => setIsProfileModalOpen(false)}
-                className="p-1 border-2 border-black bg-white hover:bg-red-500 hover:text-white brutal-shadow-sm"
+                onClick={() => { setIsProfileModalOpen(false); setPasswordStatus(null); }}
+                className={`p-1 border-2 ${theme.border} ${theme.card} hover:bg-red-500 hover:text-white brutal-shadow-sm`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Section 1: Personal Details & Physical Stats */}
             <form onSubmit={handleSaveProfile} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-black uppercase">Current Body Weight (KG)</label>
+              <span className="text-[11px] font-black uppercase bg-[#FFE600] text-black px-2 py-0.5 border border-black inline-block">
+                1. Personal Bio & Metrics
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-black uppercase">Full Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Alex Hunter"
+                    value={userName} 
+                    onChange={(e) => setUserName(e.target.value)} 
+                    className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-xs brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-black uppercase">Age (Years)</label>
+                  <input 
+                    type="number" 
+                    min="12" 
+                    max="110"
+                    placeholder="e.g. 24"
+                    value={userAge} 
+                    onChange={(e) => setUserAge(e.target.value === "" ? "" : Number(e.target.value))} 
+                    className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-xs brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[11px] font-black uppercase">Current Body Weight (KG)</label>
                 <input 
                   type="number" 
                   step="0.1" 
@@ -976,53 +1073,95 @@ export default function App() {
                   required
                   value={userProfileWeight} 
                   onChange={(e) => setUserProfileWeight(parseFloat(e.target.value) || 0)} 
-                  className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]"
+                  className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-xs brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="block text-xs font-black uppercase">Physiological Goal</label>
+              <div className="space-y-1">
+                <label className="block text-[11px] font-black uppercase">Physiological Goal</label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setUserGoal("cut")}
-                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "cut" ? "bg-[#FF5C00] text-white" : "bg-[#F4F0EA]"}`}
+                    className={`p-2 border-2 ${theme.border} text-[11px] font-black uppercase brutal-shadow-sm ${userGoal === "cut" ? "bg-[#FF5C00] text-white" : `${theme.cardMuted}`}`}
                   >
                     Cut (Deficit)
                   </button>
                   <button
                     type="button"
                     onClick={() => setUserGoal("maintain")}
-                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "maintain" ? "bg-[#FFE600] text-black" : "bg-[#F4F0EA]"}`}
+                    className={`p-2 border-2 ${theme.border} text-[11px] font-black uppercase brutal-shadow-sm ${userGoal === "maintain" ? "bg-[#FFE600] text-black" : `${theme.cardMuted}`}`}
                   >
-                    Recomp / Maintain
+                    Maintain
                   </button>
                   <button
                     type="button"
                     onClick={() => setUserGoal("bulk")}
-                    className={`p-2.5 border-2 border-black text-xs font-black uppercase brutal-shadow-sm ${userGoal === "bulk" ? "bg-[#00FFA3] text-black" : "bg-[#F4F0EA]"}`}
+                    className={`p-2 border-2 ${theme.border} text-[11px] font-black uppercase brutal-shadow-sm ${userGoal === "bulk" ? "bg-[#00FFA3] text-black" : `${theme.cardMuted}`}`}
                   >
                     Bulk (Surplus)
                   </button>
                 </div>
               </div>
 
-              <div className="bg-[#FFE600] border-2 border-black p-3 brutal-shadow-sm space-y-1">
-                <span className="text-[10px] font-black uppercase text-black block">Computed Daily Blueprint</span>
+              <div className="bg-[#FFE600] text-black border-2 border-black p-2.5 brutal-shadow-sm space-y-0.5">
+                <span className="text-[10px] font-black uppercase block">Calculated Blueprint</span>
                 <p className="font-bold text-xs">
                   Target Caloric Intake: <span className="font-black underline">{calorieTarget} kcal</span>
                 </p>
                 <p className="font-bold text-xs">
-                  Prescribed Daily Protein: <span className="font-black underline">{proteinTarget}g</span>
+                  Target Protein Intake: <span className="font-black underline">{proteinTarget}g</span>
                 </p>
               </div>
 
               <button 
                 type="submit" 
                 disabled={savingProfile}
-                className="w-full bg-[#00FFA3] text-black border-2 border-black p-3 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active mt-2"
+                className="w-full bg-[#00FFA3] text-black border-2 border-black p-2.5 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active"
               >
-                {savingProfile ? "Saving..." : "Save & Apply Targets"}
+                {savingProfile ? "Saving..." : "Save Bio & Apply Targets"}
+              </button>
+            </form>
+
+            {/* Section 2: Security & Password Update */}
+            <form onSubmit={handlePasswordChange} className={`border-t-2 ${theme.border} pt-4 space-y-3`}>
+              <span className="text-[11px] font-black uppercase bg-[#FF5C00] text-white px-2 py-0.5 border border-black inline-block">
+                2. Security & Credentials
+              </span>
+
+              <div className="space-y-1">
+                <label className="block text-[11px] font-black uppercase">Registered Email</label>
+                <input 
+                  type="text" 
+                  disabled 
+                  value={currentUser.email || ""} 
+                  className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2 text-xs font-bold opacity-60 cursor-not-allowed`}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[11px] font-black uppercase">New Password</label>
+                <input 
+                  type="password" 
+                  placeholder="Enter min. 6 characters" 
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-xs brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}
+                />
+              </div>
+
+              {passwordStatus && (
+                <div className={`p-2 border border-black text-[11px] font-black uppercase ${passwordStatus.type === "success" ? "bg-[#00FFA3] text-black" : "bg-red-200 text-red-900"}`}>
+                  {passwordStatus.msg}
+                </div>
+              )}
+
+              <button 
+                type="submit" 
+                disabled={updatingPassword || !newPassword}
+                className={`w-full ${theme.card} border-2 ${theme.border} p-2.5 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active disabled:opacity-50`}
+              >
+                {updatingPassword ? "Updating Password..." : "Update Password"}
               </button>
             </form>
           </div>
@@ -1031,7 +1170,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto space-y-8">
         {/* Banner */}
-        <section className="bg-[#FFE600] border-4 border-black p-6 brutal-shadow-lg">
+        <section className={`bg-[#FFE600] text-black border-4 border-black p-6 brutal-shadow-lg`}>
           <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-6">
             <div className="space-y-2 max-w-3xl">
               <div className="inline-flex items-center gap-2 bg-black text-white px-3 py-1 text-xs font-black uppercase tracking-widest">
@@ -1067,13 +1206,13 @@ export default function App() {
         {/* TAB 1: RECOVERY COMMAND CENTER */}
         {activeTab === "recovery" && (
           <div className="space-y-8">
-            <div className="bg-white border-4 border-black p-6 brutal-shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4`}>
               <div>
                 <div className="inline-flex items-center gap-1.5 bg-black text-[#00FFA3] px-2.5 py-0.5 text-xs font-black uppercase">
                   <ShieldCheck className="w-3.5 h-3.5" /> Neural Recovery Core
                 </div>
                 <h3 className="text-xl font-black uppercase mt-1">Adaptive Recovery Diagnosis</h3>
-                <p className="text-xs font-bold text-zinc-600 uppercase">
+                <p className={`text-xs font-bold ${theme.textSub} uppercase`}>
                   Synthesizes daily strain ({combinedTotalStrain}), protein intake ({totalProteinConsumed}g), and target demands
                 </p>
               </div>
@@ -1095,7 +1234,7 @@ export default function App() {
             )}
 
             {mlPlan && (
-              <section className="bg-[#FFE600] border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
+              <section className="bg-[#FFE600] text-black border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-2 border-black pb-4">
                   <div>
                     <span className="text-xs font-black uppercase bg-black text-white px-2 py-0.5 inline-block">
@@ -1105,22 +1244,22 @@ export default function App() {
                       Nitrogen Balance: {mlPlan.nitrogenBalanceStatus}
                     </h3>
                   </div>
-                  <div className="bg-white border-2 border-black px-4 py-2 brutal-shadow-sm font-black text-xs uppercase">
+                  <div className="bg-white text-black border-2 border-black px-4 py-2 brutal-shadow-sm font-black text-xs uppercase">
                     Target Sleep: {mlPlan.sleepTargetHours}h | Hydration: {mlPlan.hydrationLiters}L
                   </div>
                 </div>
 
-                <div className="bg-white border-2 border-black p-4 brutal-shadow-sm space-y-2">
+                <div className="bg-white text-black border-2 border-black p-4 brutal-shadow-sm space-y-2">
                   <span className="text-[10px] font-black uppercase text-zinc-500">Physiological Synthesis</span>
                   <p className="font-bold text-sm leading-relaxed text-black">{mlPlan.overallAssessment}</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-white border-2 border-black p-4 brutal-shadow-sm space-y-1.5">
+                  <div className="bg-white text-black border-2 border-black p-4 brutal-shadow-sm space-y-1.5">
                     <span className="text-[10px] font-black uppercase text-[#FF5C00]">Nutritional Adjustment</span>
                     <p className="font-bold text-xs leading-relaxed">{mlPlan.nutritionAdvice}</p>
                   </div>
-                  <div className="bg-white border-2 border-black p-4 brutal-shadow-sm space-y-1.5">
+                  <div className="bg-white text-black border-2 border-black p-4 brutal-shadow-sm space-y-1.5">
                     <span className="text-[10px] font-black uppercase text-black">Tomorrow's Training Protocol</span>
                     <p className="font-bold text-xs leading-relaxed">{mlPlan.trainingGuidanceTomorrow}</p>
                   </div>
@@ -1130,7 +1269,7 @@ export default function App() {
                   <span className="text-xs font-black uppercase tracking-wider block">Prescribed Action Items:</span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {mlPlan.actionItems.map((item, idx) => (
-                      <div key={idx} className="bg-white border-2 border-black p-3 text-xs font-black uppercase flex items-center gap-2 brutal-shadow-sm">
+                      <div key={idx} className="bg-white text-black border-2 border-black p-3 text-xs font-black uppercase flex items-center gap-2 brutal-shadow-sm">
                         <ArrowRight className="w-4 h-4 text-[#FF5C00] shrink-0" />
                         <span>{item}</span>
                       </div>
@@ -1141,48 +1280,48 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className={`border-4 border-black p-6 brutal-shadow ${combinedTotalStrain > OPTIMAL_STRAIN_LIMIT ? "bg-red-200" : "bg-white"}`}>
+              <div className={`border-4 ${theme.border} p-6 brutal-shadow ${combinedTotalStrain > OPTIMAL_STRAIN_LIMIT ? "bg-red-200 text-black" : `${theme.card}`}`}>
                 <div className="flex justify-between items-start">
                   <div>
-                    <span className="text-xs font-black uppercase text-zinc-600">Recovery Status</span>
+                    <span className={`text-xs font-black uppercase ${theme.textSub}`}>Recovery Status</span>
                     <h3 className="text-2xl font-black uppercase mt-1">{recoveryState}</h3>
                   </div>
                   {combinedTotalStrain > OPTIMAL_STRAIN_LIMIT ? <AlertTriangle className="w-8 h-8 text-red-600" /> : <CheckCircle2 className="w-8 h-8 text-[#00FFA3]" />}
                 </div>
-                <p className="text-xs font-bold text-zinc-700 mt-4 leading-relaxed">
+                <p className={`text-xs font-bold mt-4 leading-relaxed ${theme.textSub}`}>
                   {combinedTotalStrain > OPTIMAL_STRAIN_LIMIT 
                     ? "Strain threshold exceeded! Elevated risk of catabolism and central nervous fatigue." 
                     : "Training load is within optimal physiological limits for muscular and mitochondrial recovery."}
                 </p>
               </div>
 
-              <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                <span className="text-xs font-black uppercase text-zinc-600">Strain Ceiling Capacity</span>
+              <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
+                <span className={`text-xs font-black uppercase ${theme.textSub}`}>Strain Ceiling Capacity</span>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-3xl font-black">{combinedTotalStrain}</span>
                   <span className="text-sm font-bold uppercase text-zinc-500">/ {OPTIMAL_STRAIN_LIMIT} MAX</span>
                 </div>
-                <div className="w-full bg-[#F4F0EA] border-2 border-black h-6 p-0.5 mt-3">
+                <div className={`w-full ${theme.cardMuted} border-2 ${theme.border} h-6 p-0.5 mt-3`}>
                   <div className={`h-full border border-black transition-all duration-300 ${combinedTotalStrain > OPTIMAL_STRAIN_LIMIT ? "bg-red-500" : "bg-[#00FFA3]"}`} style={{ width: `${Math.min(100, strainPercentage)}%` }} />
                 </div>
-                <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">{strainPercentage.toFixed(0)}% OF TOTAL CAPACITY UTILIZED</span>
+                <span className={`block text-[10px] font-black uppercase mt-2 ${theme.textSub}`}>{strainPercentage.toFixed(0)}% OF TOTAL CAPACITY UTILIZED</span>
               </div>
 
-              <div className="bg-white border-4 border-black p-6 brutal-shadow">
+              <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-black uppercase text-zinc-600">Protein Target Buffer</span>
+                  <span className={`text-xs font-black uppercase ${theme.textSub}`}>Protein Target Buffer</span>
                   <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
                 </div>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-3xl font-black">{totalProteinConsumed}g</span>
                   <span className="text-sm font-bold uppercase text-zinc-500">/ {proteinTarget}g</span>
                 </div>
-                <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm mt-3 text-center">
+                <div className="bg-[#FFE600] text-black border-2 border-black p-2 brutal-shadow-sm mt-3 text-center">
                   <span className="text-xs font-black uppercase">
                     {totalProteinConsumed >= proteinTarget ? "Full Anabolic State" : "Protein Deficit Pending"}
                   </span>
                 </div>
-                <span className="block text-[10px] font-black uppercase mt-2 text-zinc-600">
+                <span className={`block text-[10px] font-black uppercase mt-2 ${theme.textSub}`}>
                   {totalProteinConsumed >= proteinTarget ? "Optimal hyperaminoacidemia maintained" : "Consume adequate protein to avoid catabolism"}
                 </span>
               </div>
@@ -1193,12 +1332,12 @@ export default function App() {
         {/* TAB 2: RUN */}
         {activeTab === "run" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            <section className="lg:col-span-5 bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
-              <div className="border-b-2 border-black pb-4">
+            <section className={`lg:col-span-5 ${theme.card} border-4 ${theme.border} p-6 md:p-8 brutal-shadow-lg space-y-6`}>
+              <div className={`border-b-2 ${theme.border} pb-4`}>
                 <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
                   <Footprints className="w-6 h-6 text-[#FF5C00]" /> Record Running Session
                 </h3>
-                <div className="mt-2.5 p-2 bg-[#FFE600] border-2 border-black text-[11px] font-bold text-black uppercase leading-snug brutal-shadow-sm">
+                <div className="mt-2.5 p-2 bg-[#FFE600] text-black border-2 border-black text-[11px] font-bold uppercase leading-snug brutal-shadow-sm">
                   ⚡ Calculated using an ideal aerobic baseline (140 BPM). Real-time precision is achieved when synced with a wearable device.
                 </div>
               </div>
@@ -1212,7 +1351,7 @@ export default function App() {
                     handleGpxFileDrop(e.dataTransfer.files[0]);
                   }
                 }}
-                className="border-2 border-dashed border-black bg-[#F4F0EA] p-4 text-center cursor-pointer hover:bg-[#FFE600] transition-colors relative brutal-shadow-sm"
+                className={`border-2 border-dashed ${theme.border} ${theme.cardMuted} p-4 text-center cursor-pointer hover:bg-[#FFE600] hover:text-black transition-colors relative brutal-shadow-sm`}
               >
                 <input 
                   type="file" 
@@ -1224,11 +1363,11 @@ export default function App() {
                     }
                   }}
                 />
-                <UploadCloud className="w-6 h-6 mx-auto mb-1.5 text-black" />
+                <UploadCloud className="w-6 h-6 mx-auto mb-1.5" />
                 <span className="block font-black text-xs uppercase">
                   {gpxUploading ? "Parsing File..." : "Drop .GPX Activity File"}
                 </span>
-                <span className="block text-[10px] font-bold text-zinc-600 uppercase mt-0.5">
+                <span className={`block text-[10px] font-bold ${theme.textSub} uppercase mt-0.5`}>
                   Exported from Garmin, Apple Watch, Strava, or Google Fit
                 </span>
               </div>
@@ -1242,57 +1381,57 @@ export default function App() {
               <form onSubmit={handleManualRunSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Run Distance (KM)</label>
-                  <input type="number" step="0.01" placeholder="e.g. 8.4" value={runDistance} onChange={(e) => setRunDistance(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                  <input type="number" step="0.01" placeholder="e.g. 8.4" value={runDistance} onChange={(e) => setRunDistance(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Duration (Minutes)</label>
-                  <input type="number" placeholder="e.g. 45" value={runDuration} onChange={(e) => setRunDuration(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                  <input type="number" placeholder="e.g. 45" value={runDuration} onChange={(e) => setRunDuration(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Scale Weight (KG) - Optional</label>
-                  <input type="number" step="0.1" placeholder="e.g. 77.4" value={bodyWeight} onChange={(e) => setBodyWeight(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                  <input type="number" step="0.1" placeholder="e.g. 77.4" value={bodyWeight} onChange={(e) => setBodyWeight(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                 </div>
 
                 <button type="submit" className="w-full bg-[#FF5C00] text-white border-2 border-black p-4 font-black uppercase tracking-wider text-base brutal-shadow brutal-btn-active mt-2">
                   Commit Run & Save to Cloud
                 </button>
-                {statusMessage && <div className="mt-3 text-center font-black text-xs uppercase bg-[#00FFA3] p-2 border-2 border-black">{statusMessage}</div>}
+                {statusMessage && <div className="mt-3 text-center font-black text-xs uppercase bg-[#00FFA3] text-black p-2 border-2 border-black">{statusMessage}</div>}
               </form>
             </section>
 
-            <section className="lg:col-span-7 bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
-              <div className="flex justify-between items-center pb-4 border-b-2 border-black">
-                <div className="flex items-center gap-2"><Layers className="w-6 h-6 text-black" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Running Sessions</h3></div>
+            <section className={`lg:col-span-7 ${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
+              <div className={`flex justify-between items-center pb-4 border-b-2 ${theme.border}`}>
+                <div className="flex items-center gap-2"><Layers className="w-6 h-6" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Running Sessions</h3></div>
                 <div className="bg-[#00FFA3] text-black border-2 border-black px-3 py-1 text-xs font-black uppercase brutal-shadow-sm">Total: {totalRunKm.toFixed(1)} KM</div>
               </div>
 
               {loggedRuns.length === 0 ? (
-                <div className="p-12 text-center bg-[#F4F0EA] border-2 border-dashed border-black font-black uppercase text-xs text-zinc-500">No runs logged for today ({todayKey}).</div>
+                <div className={`p-12 text-center ${theme.cardMuted} border-2 border-dashed ${theme.border} font-black uppercase text-xs ${theme.textSub}`}>No runs logged for today ({todayKey}).</div>
               ) : (
                 <div className="space-y-3 max-h-[550px] overflow-y-auto pr-1">
                   {loggedRuns.map((run) => (
-                    <div key={run.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
+                    <div key={run.id} className={`${theme.cardMuted} border-2 ${theme.border} p-4 brutal-shadow-sm flex justify-between items-center`}>
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-black text-base uppercase">{run.distanceKm} KM RUN</h4>
-                          <span className="text-[10px] font-bold bg-zinc-200 border border-black px-1.5 py-0.5 uppercase">{run.date}</span>
+                          <span className="text-[10px] font-bold bg-zinc-300 text-black border border-black px-1.5 py-0.5 uppercase">{run.date}</span>
                           {run.source && (
-                            <span className="text-[9px] font-bold bg-[#FFE600] border border-black px-1 py-0.5 uppercase truncate max-w-[100px]">{run.source}</span>
+                            <span className="text-[9px] font-bold bg-[#FFE600] text-black border border-black px-1 py-0.5 uppercase truncate max-w-[100px]">{run.source}</span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase">
+                        <div className={`flex items-center gap-2 mt-1 text-xs font-bold ${theme.textSub} uppercase`}>
                           <span>{run.durationMin} MINS</span>
                           {run.weightKg && (
                             <>
                               <span>•</span>
-                              <span className="text-black font-black">{run.weightKg} KG</span>
+                              <span className="font-black text-inherit">{run.weightKg} KG</span>
                             </>
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-black text-sm bg-[#FF5C00] text-white border border-black px-2 py-0.5">{run.strain}</span>
-                        <button onClick={() => handleDeleteRun(run.id)} className="p-2 bg-white border border-black brutal-shadow-sm brutal-btn-active text-black hover:bg-red-500 hover:text-white"><Trash2 className="w-4 h-4" /></button>
+                        <button onClick={() => handleDeleteRun(run.id)} className={`p-2 ${theme.card} border ${theme.border} brutal-shadow-sm brutal-btn-active hover:bg-red-500 hover:text-white`}><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </div>
                   ))}
@@ -1305,8 +1444,8 @@ export default function App() {
         {/* TAB 3: WORKOUTS */}
         {activeTab === "workouts" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            <section className="lg:col-span-5 bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
-              <div className="border-b-2 border-black pb-4">
+            <section className={`lg:col-span-5 ${theme.card} border-4 ${theme.border} p-6 md:p-8 brutal-shadow-lg space-y-6`}>
+              <div className={`border-b-2 ${theme.border} pb-4`}>
                 <h3 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
                   <Dumbbell className="w-6 h-6 text-[#FF5C00]" /> Log Workout Set
                 </h3>
@@ -1315,26 +1454,26 @@ export default function App() {
               <form onSubmit={handleAddWorkout} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Select Preset Exercise</label>
-                  <select value={selectedExercise} onChange={(e) => setSelectedExercise(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]">
-                    {PRESET_EXERCISES.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
+                  <select value={selectedExercise} onChange={(e) => setSelectedExercise(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}>
+                    {PRESET_EXERCISES.map((ex) => <option key={ex} value={ex} className="text-black bg-white">{ex}</option>)}
                   </select>
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase">Or Custom Exercise</label>
-                  <input type="text" placeholder="e.g. Incline Dumbbell Curl" value={customExercise} onChange={(e) => setCustomExercise(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                  <input type="text" placeholder="e.g. Incline Dumbbell Curl" value={customExercise} onChange={(e) => setCustomExercise(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1.5">
                     <label className="block text-xs font-black uppercase">Sets</label>
-                    <input type="number" placeholder="4" min="1" value={sets} onChange={(e) => setSets(e.target.value === "" ? "" : Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                    <input type="number" placeholder="4" min="1" value={sets} onChange={(e) => setSets(e.target.value === "" ? "" : Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-xs font-black uppercase">Reps</label>
-                    <input type="number" placeholder="10" min="1" value={reps} onChange={(e) => setReps(e.target.value === "" ? "" : Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                    <input type="number" placeholder="10" min="1" value={reps} onChange={(e) => setReps(e.target.value === "" ? "" : Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-xs font-black uppercase">Weight (KG)</label>
-                    <input type="number" step="0.5" placeholder="80" value={weight} onChange={(e) => setWeight(e.target.value === "" ? "" : Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                    <input type="number" step="0.5" placeholder="80" value={weight} onChange={(e) => setWeight(e.target.value === "" ? "" : Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                   </div>
                 </div>
 
@@ -1342,25 +1481,25 @@ export default function App() {
               </form>
             </section>
 
-            <section className="lg:col-span-7 bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
-              <div className="flex justify-between items-center pb-4 border-b-2 border-black">
-                <div className="flex items-center gap-2"><Layers className="w-6 h-6 text-black" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Workout Log</h3></div>
+            <section className={`lg:col-span-7 ${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
+              <div className={`flex justify-between items-center pb-4 border-b-2 ${theme.border}`}>
+                <div className="flex items-center gap-2"><Layers className="w-6 h-6" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Workout Log</h3></div>
                 <div className="bg-[#FF5C00] text-white border-2 border-black px-3 py-1 text-xs font-black uppercase brutal-shadow-sm">Lifting Strain: {totalWorkoutStrain.toFixed(1)}</div>
               </div>
 
               {workoutList.length === 0 ? (
-                <div className="p-12 text-center bg-[#F4F0EA] border-2 border-dashed border-black font-black uppercase text-xs text-zinc-500">No workouts recorded for today ({todayKey}).</div>
+                <div className={`p-12 text-center ${theme.cardMuted} border-2 border-dashed ${theme.border} font-black uppercase text-xs ${theme.textSub}`}>No workouts recorded for today ({todayKey}).</div>
               ) : (
                 <div className="space-y-3 max-h-[440px] overflow-y-auto pr-1">
                   {workoutList.map((item) => (
-                    <div key={item.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
+                    <div key={item.id} className={`${theme.cardMuted} border-2 ${theme.border} p-4 brutal-shadow-sm flex justify-between items-center`}>
                       <div>
                         <h4 className="font-black text-sm uppercase">{item.name}</h4>
-                        <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase"><span>{item.sets} Sets</span><span>•</span><span>{item.reps} Reps</span><span>•</span><span>{item.weight} KG</span></div>
+                        <div className={`flex items-center gap-2 mt-1 text-xs font-bold ${theme.textSub} uppercase`}><span>{item.sets} Sets</span><span>•</span><span>{item.reps} Reps</span><span>•</span><span>{item.weight} KG</span></div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="font-black text-sm bg-[#FFE600] border border-black px-2 py-0.5">{item.strain}</span>
-                        <button onClick={() => handleDeleteWorkout(item.id)} className="p-2 bg-white border border-black brutal-shadow-sm brutal-btn-active text-black hover:bg-red-500 hover:text-white"><Trash2 className="w-4 h-4" /></button>
+                        <span className="font-black text-sm bg-[#FFE600] text-black border border-black px-2 py-0.5">{item.strain}</span>
+                        <button onClick={() => handleDeleteWorkout(item.id)} className={`p-2 ${theme.card} border ${theme.border} brutal-shadow-sm brutal-btn-active hover:bg-red-500 hover:text-white`}><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </div>
                   ))}
@@ -1373,50 +1512,50 @@ export default function App() {
         {/* TAB 4: MACROS */}
         {activeTab === "nutrition" && (
           <div className="space-y-6">
-            <div className="flex flex-wrap items-center gap-3 bg-white border-4 border-black p-3 brutal-shadow">
-              <button onClick={() => setNutritionSubTab("add")} className={`px-5 py-2.5 font-black uppercase text-sm border-2 border-black brutal-shadow-sm brutal-btn-active flex items-center gap-2 ${nutritionSubTab === "add" ? "bg-[#FFE600] text-black" : "bg-[#F4F0EA] text-zinc-600"}`}><Plus className="w-4 h-4" /> 1. Add Food (Today)</button>
-              <button onClick={() => setNutritionSubTab("history")} className={`px-5 py-2.5 font-black uppercase text-sm border-2 border-black brutal-shadow-sm brutal-btn-active flex items-center gap-2 ${nutritionSubTab === "history" ? "bg-[#00FFA3] text-black" : "bg-[#F4F0EA] text-zinc-600"}`}><Clock className="w-4 h-4" /> 2. Food History by Date</button>
+            <div className={`flex flex-wrap items-center gap-3 ${theme.card} border-4 ${theme.border} p-3 brutal-shadow`}>
+              <button onClick={() => setNutritionSubTab("add")} className={`px-5 py-2.5 font-black uppercase text-sm border-2 ${theme.border} brutal-shadow-sm brutal-btn-active flex items-center gap-2 ${nutritionSubTab === "add" ? "bg-[#FFE600] text-black" : `${theme.cardMuted}`}`}><Plus className="w-4 h-4" /> 1. Add Food (Today)</button>
+              <button onClick={() => setNutritionSubTab("history")} className={`px-5 py-2.5 font-black uppercase text-sm border-2 ${theme.border} brutal-shadow-sm brutal-btn-active flex items-center gap-2 ${nutritionSubTab === "history" ? "bg-[#00FFA3] text-black" : `${theme.cardMuted}`}`}><Clock className="w-4 h-4" /> 2. Food History by Date</button>
             </div>
 
             {nutritionSubTab === "add" && (
               <div className="space-y-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white border-4 border-black p-6 brutal-shadow">
+                  <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-2"><Zap className="w-5 h-5 text-[#FF5C00]" /><span className="font-black uppercase text-sm">Protein Progress</span></div>
                       <button onClick={() => setIsProfileModalOpen(true)} className="font-black text-sm underline hover:text-[#FF5C00]">{totalProteinConsumed}g / {proteinTarget}g</button>
                     </div>
-                    <div className="w-full bg-[#F4F0EA] border-2 border-black h-6 p-0.5">
+                    <div className={`w-full ${theme.cardMuted} border-2 ${theme.border} h-6 p-0.5`}>
                       <div className="bg-[#00FFA3] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalProteinConsumed / proteinTarget) * 100)}%` }} />
                     </div>
-                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{((totalProteinConsumed / proteinTarget) * 100).toFixed(0)}% of daily target reached ({userGoal.toUpperCase()})</p>
+                    <p className={`text-[11px] font-bold ${theme.textSub} uppercase mt-2`}>{((totalProteinConsumed / proteinTarget) * 100).toFixed(0)}% of daily target reached ({userGoal.toUpperCase()})</p>
                   </div>
 
-                  <div className="bg-white border-4 border-black p-6 brutal-shadow">
+                  <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-2"><Flame className="w-5 h-5 text-[#FF5C00]" /><span className="font-black uppercase text-sm">Calories Consumed</span></div>
                       <button onClick={() => setIsProfileModalOpen(true)} className="font-black text-sm underline hover:text-[#FF5C00]">{totalCaloriesConsumed} / {calorieTarget} kcal</button>
                     </div>
-                    <div className="w-full bg-[#F4F0EA] border-2 border-black h-6 p-0.5">
+                    <div className={`w-full ${theme.cardMuted} border-2 ${theme.border} h-6 p-0.5`}>
                       <div className="bg-[#FFE600] h-full border border-black transition-all duration-300" style={{ width: `${Math.min(100, (totalCaloriesConsumed / calorieTarget) * 100)}%` }} />
                     </div>
-                    <p className="text-[11px] font-bold text-zinc-600 uppercase mt-2">{calorieTarget - totalCaloriesConsumed >= 0 ? `${calorieTarget - totalCaloriesConsumed} kcal remaining` : `${Math.abs(calorieTarget - totalCaloriesConsumed)} kcal over target`}</p>
+                    <p className={`text-[11px] font-bold ${theme.textSub} uppercase mt-2`}>{calorieTarget - totalCaloriesConsumed >= 0 ? `${calorieTarget - totalCaloriesConsumed} kcal remaining` : `${Math.abs(calorieTarget - totalCaloriesConsumed)} kcal over target`}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   <div className="lg:col-span-6 space-y-6">
-                    <section className="bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
+                    <section className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
                       <h3 className="text-lg font-black uppercase tracking-tight flex items-center gap-2"><UtensilsCrossed className="w-5 h-5" /> Select From Food Database</h3>
                       <form onSubmit={handleAddDropdownFood} className="space-y-3">
-                        <select value={selectedFoodIndex} onChange={(e) => setSelectedFoodIndex(Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-3 font-bold text-xs md:text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]">
+                        <select value={selectedFoodIndex} onChange={(e) => setSelectedFoodIndex(Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-3 font-bold text-xs md:text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`}>
                           {FOOD_DATABASE.map((item, idx) => (
-                            <option key={idx} value={idx}>{item.name} ({item.portion}) — ~{item.calories} kcal | ~{item.protein}g P</option>
+                            <option key={idx} value={idx} className="text-black bg-white">{item.name} ({item.portion}) — ~{item.calories} kcal | ~{item.protein}g P</option>
                           ))}
                         </select>
                         <div className="grid grid-cols-2 gap-3">
-                          <input type="number" step="0.1" min="0.1" value={presetServings} onChange={(e) => setPresetServings(Math.max(0.1, parseFloat(e.target.value) || 1))} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none" />
-                          <div className="bg-[#FFE600] border-2 border-black p-2 brutal-shadow-sm flex flex-col justify-center text-center font-black text-xs">
+                          <input type="number" step="0.1" min="0.1" value={presetServings} onChange={(e) => setPresetServings(Math.max(0.1, parseFloat(e.target.value) || 1))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none`} />
+                          <div className="bg-[#FFE600] text-black border-2 border-black p-2 brutal-shadow-sm flex flex-col justify-center text-center font-black text-xs">
                             {Math.round(FOOD_DATABASE[selectedFoodIndex].calories * presetServings)} kcal | {(FOOD_DATABASE[selectedFoodIndex].protein * presetServings).toFixed(1)}g P
                           </div>
                         </div>
@@ -1424,14 +1563,14 @@ export default function App() {
                       </form>
                     </section>
 
-                    <section className="bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
-                      <h3 className="text-base font-black uppercase tracking-tight flex items-center gap-2"><Search className="w-5 h-5 text-black" /> Type & Search Food</h3>
-                      <input type="text" placeholder="Type name (e.g. Biryani, Paneer, Whey)..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                    <section className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
+                      <h3 className="text-base font-black uppercase tracking-tight flex items-center gap-2"><Search className="w-5 h-5" /> Type & Search Food</h3>
+                      <input type="text" placeholder="Type name (e.g. Biryani, Paneer, Whey)..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                       {searchQuery.trim() && (
-                        <div className="border-2 border-black bg-[#F4F0EA] max-h-56 overflow-y-auto divide-y-2 divide-black brutal-shadow-sm">
+                        <div className={`border-2 ${theme.border} ${theme.cardMuted} max-h-56 overflow-y-auto divide-y-2 ${theme.border} brutal-shadow-sm`}>
                           {filteredFoods.map((item, idx) => (
-                            <div key={idx} className="p-3 flex justify-between items-center hover:bg-[#FFE600]">
-                              <div><h5 className="font-black text-xs uppercase">{item.name}</h5><p className="text-[11px] font-bold text-zinc-600 uppercase">{item.portion} • ~{item.calories} kcal • ~{item.protein}g P</p></div>
+                            <div key={idx} className="p-3 flex justify-between items-center hover:bg-[#FFE600] hover:text-black">
+                              <div><h5 className="font-black text-xs uppercase">{item.name}</h5><p className="text-[11px] font-bold opacity-75 uppercase">{item.portion} • ~{item.calories} kcal • ~{item.protein}g P</p></div>
                               <button onClick={() => handleAddSearchedFood(item)} className="bg-[#00FFA3] text-black border-2 border-black px-3 py-1 font-black text-xs uppercase brutal-shadow-sm brutal-btn-active">+ Add</button>
                             </div>
                           ))}
@@ -1439,39 +1578,39 @@ export default function App() {
                       )}
                     </section>
 
-                    <section className="bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
+                    <section className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
                       <h3 className="text-base font-black uppercase tracking-tight flex items-center gap-2"><Plus className="w-5 h-5" /> Add Custom Food / Snack</h3>
                       <form onSubmit={handleAddCustomFood} className="space-y-3">
-                        <input type="text" placeholder="Food Name" value={customFoodName} onChange={(e) => setCustomFoodName(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600]" />
+                        <input type="text" placeholder="Food Name" value={customFoodName} onChange={(e) => setCustomFoodName(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none focus:bg-[#FFE600] focus:text-black`} />
                         <div className="grid grid-cols-3 gap-2">
-                          <input type="text" placeholder="Portion" value={customFoodPortion} onChange={(e) => setCustomFoodPortion(e.target.value)} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none" />
-                          <input type="number" placeholder="Calories" value={customFoodCals} onChange={(e) => setCustomFoodCals(e.target.value === "" ? "" : Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none" />
-                          <input type="number" step="0.1" placeholder="Protein (g)" value={customFoodProt} onChange={(e) => setCustomFoodProt(e.target.value === "" ? "" : Number(e.target.value))} className="w-full bg-[#F4F0EA] border-2 border-black p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none" />
+                          <input type="text" placeholder="Portion" value={customFoodPortion} onChange={(e) => setCustomFoodPortion(e.target.value)} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none`} />
+                          <input type="number" placeholder="Calories" value={customFoodCals} onChange={(e) => setCustomFoodCals(e.target.value === "" ? "" : Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none`} />
+                          <input type="number" step="0.1" placeholder="Protein (g)" value={customFoodProt} onChange={(e) => setCustomFoodProt(e.target.value === "" ? "" : Number(e.target.value))} className={`w-full ${theme.cardMuted} border-2 ${theme.border} p-2.5 font-bold text-sm brutal-shadow-sm focus:outline-none`} />
                         </div>
-                        <button type="submit" className="w-full bg-black text-white border-2 border-black p-3 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active mt-2">+ Save Custom Item</button>
+                        <button type="submit" className={`w-full ${theme.card} border-2 ${theme.border} p-3 font-black uppercase tracking-wider text-xs brutal-shadow brutal-btn-active mt-2`}>+ Save Custom Item</button>
                       </form>
                     </section>
                   </div>
 
-                  <section className="lg:col-span-6 bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
-                    <div className="flex justify-between items-center pb-4 border-b-2 border-black">
-                      <div className="flex items-center gap-2"><Layers className="w-6 h-6 text-black" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Consumed Foods</h3></div>
+                  <section className={`lg:col-span-6 ${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
+                    <div className={`flex justify-between items-center pb-4 border-b-2 ${theme.border}`}>
+                      <div className="flex items-center gap-2"><Layers className="w-6 h-6" /><h3 className="text-xl font-black uppercase tracking-tight">Today's Consumed Foods</h3></div>
                       <div className="bg-[#FFE600] text-black border-2 border-black px-3 py-1 text-xs font-black uppercase brutal-shadow-sm">{loggedFoods.length} Logged</div>
                     </div>
 
                     {loggedFoods.length === 0 ? (
-                      <div className="p-12 text-center bg-[#F4F0EA] border-2 border-dashed border-black font-black uppercase text-xs text-zinc-500">No meals logged for today ({todayKey}).</div>
+                      <div className={`p-12 text-center ${theme.cardMuted} border-2 border-dashed ${theme.border} font-black uppercase text-xs ${theme.textSub}`}>No meals logged for today ({todayKey}).</div>
                     ) : (
                       <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
                         {loggedFoods.map((item) => (
-                          <div key={item.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
+                          <div key={item.id} className={`${theme.cardMuted} border-2 ${theme.border} p-4 brutal-shadow-sm flex justify-between items-center`}>
                             <div>
                               <h4 className="font-black text-sm uppercase">{item.name}</h4>
-                              <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase"><span>{item.portion}</span>{item.servings !== 1 && <span>({item.servings}x)</span>}<span>•</span><span className="text-[#FF5C00] font-black">{item.calories} kcal</span></div>
+                              <div className={`flex items-center gap-2 mt-1 text-xs font-bold ${theme.textSub} uppercase`}><span>{item.portion}</span>{item.servings !== 1 && <span>({item.servings}x)</span>}<span>•</span><span className="text-[#FF5C00] font-black">{item.calories} kcal</span></div>
                             </div>
                             <div className="flex items-center gap-3">
-                              <span className="font-black text-sm bg-[#00FFA3] border border-black px-2 py-0.5">{item.protein}g</span>
-                              <button onClick={() => handleDeleteFood(item.id)} className="p-2 bg-white border border-black brutal-shadow-sm brutal-btn-active text-black hover:bg-red-500 hover:text-white"><Trash2 className="w-4 h-4" /></button>
+                              <span className="font-black text-sm bg-[#00FFA3] text-black border border-black px-2 py-0.5">{item.protein}g</span>
+                              <button onClick={() => handleDeleteFood(item.id)} className={`p-2 ${theme.card} border ${theme.border} brutal-shadow-sm brutal-btn-active hover:bg-red-500 hover:text-white`}><Trash2 className="w-4 h-4" /></button>
                             </div>
                           </div>
                         ))}
@@ -1485,21 +1624,21 @@ export default function App() {
             {/* OPTION 2: FOOD HISTORY */}
             {nutritionSubTab === "history" && (
               <div className="space-y-8">
-                <section className="bg-white border-4 border-black p-6 md:p-8 brutal-shadow-lg space-y-6">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-2 border-black pb-4">
+                <section className={`${theme.card} border-4 ${theme.border} p-6 md:p-8 brutal-shadow-lg space-y-6`}>
+                  <div className={`flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b-2 ${theme.border} pb-4`}>
                     <div>
                       <span className="text-[11px] uppercase tracking-widest font-black text-black bg-[#FFE600] px-2 py-0.5 border border-black inline-block">
                         Weekly Nutrition Distribution
                       </span>
-                      <h3 className="text-2xl font-black uppercase text-black mt-2">
+                      <h3 className="text-2xl font-black uppercase mt-2">
                         {historyMetric === "protein" ? "Protein Distribution (g)" : "Calorie Distribution (kcal)"}
                       </h3>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex bg-[#F4F0EA] p-1 border-2 border-black brutal-shadow-sm">
-                        <button onClick={() => setHistoryMetric("protein")} className={`px-3 py-1 text-xs font-black uppercase transition-colors ${historyMetric === "protein" ? "bg-[#00FFA3] text-black border border-black" : "text-black hover:bg-[#FFE600]"}`}>Protein (g)</button>
-                        <button onClick={() => setHistoryMetric("calories")} className={`px-3 py-1 text-xs font-black uppercase transition-colors ${historyMetric === "calories" ? "bg-[#FF5C00] text-white border border-black" : "text-black hover:bg-[#FFE600]"}`}>Calories (kcal)</button>
+                      <div className={`flex ${theme.cardMuted} p-1 border-2 ${theme.border} brutal-shadow-sm`}>
+                        <button onClick={() => setHistoryMetric("protein")} className={`px-3 py-1 text-xs font-black uppercase transition-colors ${historyMetric === "protein" ? "bg-[#00FFA3] text-black border border-black" : "text-inherit hover:bg-[#FFE600] hover:text-black"}`}>Protein (g)</button>
+                        <button onClick={() => setHistoryMetric("calories")} className={`px-3 py-1 text-xs font-black uppercase transition-colors ${historyMetric === "calories" ? "bg-[#FF5C00] text-white border border-black" : "text-inherit hover:bg-[#FFE600] hover:text-black"}`}>Calories (kcal)</button>
                       </div>
 
                       <input type="date" value={selectedHistoryDate} onChange={(e) => setSelectedHistoryDate(e.target.value)} className="bg-[#FFE600] text-black border-2 border-black p-1.5 font-black text-xs brutal-shadow-sm focus:outline-none" />
@@ -1511,63 +1650,63 @@ export default function App() {
                       <ComposedChart data={historyWeeklyChartData} margin={{ top: 20, right: 30, left: -20, bottom: 0 }} onClick={(e: any) => { if (e?.activePayload && e.activePayload[0]?.payload?.fullDate) setSelectedHistoryDate(e.activePayload[0].payload.fullDate); }}>
                         <defs>
                           <pattern id="brutalDiagonalHatch" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-                            <line x1="0" y1="0" x2="0" y2="8" stroke="#000" strokeWidth="2" opacity="0.15" />
+                            <line x1="0" y1="0" x2="0" y2="8" stroke={theme.chartStroke} strokeWidth="2" opacity="0.15" />
                           </pattern>
                         </defs>
 
-                        <XAxis dataKey="day" stroke="#000" tick={{ fill: '#000', fontSize: 13, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} />
-                        <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 11, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: '#000', strokeWidth: 2 }} domain={[0, historyMetric === "protein" ? 220 : 3000]} />
+                        <XAxis dataKey="day" stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 13, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: theme.chartStroke, strokeWidth: 2 }} />
+                        <YAxis stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 11, fontWeight: 'bold' }} tickLine={false} axisLine={{ stroke: theme.chartStroke, strokeWidth: 2 }} domain={[0, historyMetric === "protein" ? 220 : 3000]} />
                         <Tooltip contentStyle={{ backgroundColor: '#FFE600', border: '2px solid black', color: '#000', fontWeight: 'bold', fontSize: 12 }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.fullDate || ""} />
-                        <ReferenceLine y={historyMetric === "protein" ? proteinTarget : calorieTarget} stroke="#000" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Target', fill: '#000', fontSize: 11, fontWeight: 'bold', position: 'right' }} />
-                        <Area type="monotone" dataKey={historyMetric === "protein" ? "proteinAvg" : "caloriesAvg"} stroke="#000" strokeWidth={2} fill="url(#brutalDiagonalHatch)" />
-                        <Bar dataKey={historyMetric === "protein" ? "protein" : "calories"} fill={historyMetric === "protein" ? "#00FFA3" : "#FF5C00"} stroke="#000" strokeWidth={2} barSize={18} radius={[6, 6, 0, 0]} />
+                        <ReferenceLine y={historyMetric === "protein" ? proteinTarget : calorieTarget} stroke={theme.chartStroke} strokeDasharray="4 4" strokeWidth={2} label={{ value: 'Target', fill: theme.chartStroke, fontSize: 11, fontWeight: 'bold', position: 'right' }} />
+                        <Area type="monotone" dataKey={historyMetric === "protein" ? "proteinAvg" : "caloriesAvg"} stroke={theme.chartStroke} strokeWidth={2} fill="url(#brutalDiagonalHatch)" />
+                        <Bar dataKey={historyMetric === "protein" ? "protein" : "calories"} fill={historyMetric === "protein" ? "#00FFA3" : "#FF5C00"} stroke={theme.chartStroke} strokeWidth={2} barSize={18} radius={[6, 6, 0, 0]} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-6 pt-2 border-t-2 border-black text-xs font-black uppercase">
+                  <div className={`flex flex-wrap items-center gap-6 pt-2 border-t-2 ${theme.border} text-xs font-black uppercase`}>
                     <div className="flex items-center gap-2">
-                      <span className={`w-3.5 h-3.5 border border-black inline-block ${historyMetric === "protein" ? "bg-[#00FFA3]" : "bg-[#FF5C00]"}`} />
-                      <span className="text-black">{historyMetric === "protein" ? "Daily Protein Intake (g)" : "Daily Caloric Intake (kcal)"}</span>
+                      <span className={`w-3.5 h-3.5 border ${theme.border} inline-block ${historyMetric === "protein" ? "bg-[#00FFA3]" : "bg-[#FF5C00]"}`} />
+                      <span>{historyMetric === "protein" ? "Daily Protein Intake (g)" : "Daily Caloric Intake (kcal)"}</span>
                     </div>
                   </div>
                 </section>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-[#FFE600] border-4 border-black p-6 brutal-shadow">
-                    <span className="text-xs font-black uppercase text-black">Selected Record Date</span>
+                  <div className="bg-[#FFE600] text-black border-4 border-black p-6 brutal-shadow">
+                    <span className="text-xs font-black uppercase">Selected Record Date</span>
                     <h3 className="text-2xl font-black uppercase mt-1">{selectedHistoryDate}</h3>
                     <span className="text-[10px] font-bold bg-black text-white px-2 py-0.5 inline-block mt-2 uppercase">{selectedHistoryDate === todayKey ? "Today's Live Record" : "Archived Record"}</span>
                   </div>
 
-                  <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                    <div className="flex justify-between items-center"><span className="text-xs font-black uppercase text-zinc-500">Calories on Day</span><Flame className="w-5 h-5 text-[#FF5C00]" /></div>
+                  <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
+                    <div className="flex justify-between items-center"><span className={`text-xs font-black uppercase ${theme.textSub}`}>Calories on Day</span><Flame className="w-5 h-5 text-[#FF5C00]" /></div>
                     <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayCalories}</span><span className="text-xs font-bold uppercase">/ {calorieTarget} kcal</span></div>
                   </div>
 
-                  <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                    <div className="flex justify-between items-center"><span className="text-xs font-black uppercase text-zinc-500">Protein on Day</span><Zap className="w-5 h-5 text-[#00FFA3]" /></div>
+                  <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
+                    <div className="flex justify-between items-center"><span className={`text-xs font-black uppercase ${theme.textSub}`}>Protein on Day</span><Zap className="w-5 h-5 text-[#00FFA3]" /></div>
                     <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{historyDayProtein}</span><span className="text-xs font-bold uppercase">/ {proteinTarget}g</span></div>
                   </div>
                 </div>
 
-                <section className="bg-white border-4 border-black p-6 brutal-shadow-lg space-y-4">
-                  <div className="flex justify-between items-center pb-4 border-b-2 border-black">
-                    <div className="flex items-center gap-2"><History className="w-6 h-6 text-black" /><h3 className="text-xl font-black uppercase">Meals Eaten on {selectedHistoryDate}</h3></div>
+                <section className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow-lg space-y-4`}>
+                  <div className={`flex justify-between items-center pb-4 border-b-2 ${theme.border}`}>
+                    <div className="flex items-center gap-2"><History className="w-6 h-6" /><h3 className="text-xl font-black uppercase">Meals Eaten on {selectedHistoryDate}</h3></div>
                     <div className="bg-[#00FFA3] text-black border-2 border-black px-3 py-1 text-xs font-black uppercase brutal-shadow-sm">{historyDayFoods.length} Items Logged</div>
                   </div>
 
                   {historyDayFoods.length === 0 ? (
-                    <div className="p-16 text-center bg-[#F4F0EA] border-2 border-dashed border-black font-black uppercase text-xs text-zinc-500">No food records found for {selectedHistoryDate}.</div>
+                    <div className={`p-16 text-center ${theme.cardMuted} border-2 border-dashed ${theme.border} font-black uppercase text-xs ${theme.textSub}`}>No food records found for {selectedHistoryDate}.</div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {historyDayFoods.map((item) => (
-                        <div key={item.id} className="bg-[#F4F0EA] border-2 border-black p-4 brutal-shadow-sm flex justify-between items-center">
+                        <div key={item.id} className={`${theme.cardMuted} border-2 ${theme.border} p-4 brutal-shadow-sm flex justify-between items-center`}>
                           <div>
                             <h4 className="font-black text-sm uppercase">{item.name}</h4>
-                            <div className="flex items-center gap-2 mt-1 text-xs font-bold text-zinc-700 uppercase"><span>{item.portion}</span>{item.servings !== 1 && <span>({item.servings}x)</span>}<span>•</span><span className="text-[#FF5C00] font-black">{item.calories} kcal</span></div>
+                            <div className={`flex items-center gap-2 mt-1 text-xs font-bold ${theme.textSub} uppercase`}><span>{item.portion}</span>{item.servings !== 1 && <span>({item.servings}x)</span>}<span>•</span><span className="text-[#FF5C00] font-black">{item.calories} kcal</span></div>
                           </div>
-                          <span className="font-black text-sm bg-[#00FFA3] border border-black px-2 py-0.5">{item.protein}g</span>
+                          <span className="font-black text-sm bg-[#00FFA3] text-black border border-black px-2 py-0.5">{item.protein}g</span>
                         </div>
                       ))}
                     </div>
@@ -1582,24 +1721,24 @@ export default function App() {
         {activeTab === "overview" && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
-                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Today's Run</span><Footprints className="w-5 h-5 text-[#FF5C00]" /></div>
+              <div className={`${theme.card} border-3 ${theme.border} p-4 brutal-shadow-sm`}>
+                <div className="flex justify-between items-start"><span className={`text-xs font-black uppercase ${theme.textSub}`}>Today's Run</span><Footprints className="w-5 h-5 text-[#FF5C00]" /></div>
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{totalRunKm.toFixed(1)}</span><span className="text-xs font-bold uppercase">KM</span></div>
               </div>
-              <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
-                <div className="flex justify-between items-start"><span className="text-xs font-black uppercase text-zinc-500">Combined Strain</span><Dumbbell className="w-5 h-5 text-black" /></div>
+              <div className={`${theme.card} border-3 ${theme.border} p-4 brutal-shadow-sm`}>
+                <div className="flex justify-between items-start"><span className={`text-xs font-black uppercase ${theme.textSub}`}>Combined Strain</span><Dumbbell className="w-5 h-5 text-inherit" /></div>
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{combinedTotalStrain}</span><span className="text-xs font-bold uppercase">/ {OPTIMAL_STRAIN_LIMIT}</span></div>
               </div>
-              <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
+              <div className={`${theme.card} border-3 ${theme.border} p-4 brutal-shadow-sm`}>
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-black uppercase text-zinc-500">Protein Hit</span>
+                  <span className={`text-xs font-black uppercase ${theme.textSub}`}>Protein Hit</span>
                   <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
                 </div>
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{totalProteinConsumed}</span><span className="text-xs font-bold uppercase">/ {proteinTarget}g</span></div>
               </div>
-              <div className="bg-white border-3 border-black p-4 brutal-shadow-sm">
+              <div className={`${theme.card} border-3 ${theme.border} p-4 brutal-shadow-sm`}>
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-black uppercase text-zinc-500">Daily Calorie Target</span>
+                  <span className={`text-xs font-black uppercase ${theme.textSub}`}>Daily Calorie Target</span>
                   <button onClick={() => setIsProfileModalOpen(true)} className="text-[10px] font-black uppercase underline hover:text-[#FF5C00]">Edit</button>
                 </div>
                 <div className="mt-2 flex items-baseline gap-2"><span className="text-3xl font-black">{calorieTarget}</span><span className="text-xs font-bold uppercase">KCAL</span></div>
@@ -1607,39 +1746,39 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
+              <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
+                <div className={`flex justify-between items-center mb-4 border-b-2 ${theme.border} pb-2`}>
                   <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Activity className="w-4 h-4 text-[#FF5C00]" /> Running Volume (Past 7 Days)</h3>
                 </div>
                 <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={runChartData}>
-                      <XAxis dataKey="day" stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} />
-                      <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} />
-                      <Tooltip contentStyle={{ backgroundColor: '#FFE600', border: '2px solid black', fontWeight: 'bold' }} />
-                      <Bar dataKey="km" fill="#FF5C00" stroke="#000" strokeWidth={2} />
+                      <XAxis dataKey="day" stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 12, fontWeight: 'bold' }} />
+                      <YAxis stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 12, fontWeight: 'bold' }} />
+                      <Tooltip contentStyle={{ backgroundColor: '#FFE600', border: '2px solid black', color: '#000', fontWeight: 'bold' }} />
+                      <Bar dataKey="km" fill="#FF5C00" stroke={theme.chartStroke} strokeWidth={2} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              <div className="bg-white border-4 border-black p-6 brutal-shadow">
-                <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
+              <div className={`${theme.card} border-4 ${theme.border} p-6 brutal-shadow`}>
+                <div className={`flex justify-between items-center mb-4 border-b-2 ${theme.border} pb-2`}>
                   <h3 className="font-black uppercase text-sm tracking-wide flex items-center gap-2"><Dumbbell className="w-4 h-4" /> Body Scale Weight Trend</h3>
                 </div>
                 <div className="h-64 w-full">
                   {weightTrendData.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-black bg-[#F4F0EA] p-6 text-center">
-                      <span className="font-black text-xs uppercase text-zinc-600">No Scale Entries Yet</span>
-                      <p className="text-[11px] font-bold text-zinc-500 mt-1 uppercase">Enter scale weight (kg) when logging a run to plot your trajectory.</p>
+                    <div className={`h-full flex flex-col items-center justify-center border-2 border-dashed ${theme.border} ${theme.cardMuted} p-6 text-center`}>
+                      <span className="font-black text-xs uppercase">No Scale Entries Yet</span>
+                      <p className={`text-[11px] font-bold ${theme.textSub} mt-1 uppercase`}>Enter scale weight (kg) when logging a run to plot your trajectory.</p>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={weightTrendData}>
-                        <XAxis dataKey="entry" stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} />
-                        <YAxis stroke="#000" tick={{ fill: '#000', fontSize: 12, fontWeight: 'bold' }} domain={['dataMin - 1', 'dataMax + 1']} />
-                        <Tooltip contentStyle={{ backgroundColor: '#00FFA3', border: '2px solid black', fontWeight: 'bold' }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.date || ""} />
-                        <Area type="monotone" dataKey="weight" stroke="#000" strokeWidth={3} fill="#FFE600" />
+                        <XAxis dataKey="entry" stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 12, fontWeight: 'bold' }} />
+                        <YAxis stroke={theme.chartStroke} tick={{ fill: theme.chartStroke, fontSize: 12, fontWeight: 'bold' }} domain={['dataMin - 1', 'dataMax + 1']} />
+                        <Tooltip contentStyle={{ backgroundColor: '#00FFA3', border: '2px solid black', color: '#000', fontWeight: 'bold' }} labelFormatter={(_: any, payload: any) => payload[0]?.payload?.date || ""} />
+                        <Area type="monotone" dataKey="weight" stroke={theme.chartStroke} strokeWidth={3} fill="#FFE600" />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
